@@ -4,15 +4,17 @@
 
 ## Web boshqaruv paneli
 
-114 ta test o'tdi. Panel testlari autentifikatsiya, CSRF, boshqa origin'dan yozishni rad etish, login urinishlarini cheklash, logout, maxfiy fayllarni bermaslik, reja/eslatma tahrirlash, kontaktni tekshirish va jonli ruxsat ro'yxatini yangilash, ruxsatni Telegramsiz bekor qilish, takroriy qo'ng'iroqni bostirish, keyingi vaqtga saqlash, kechikkan topshiriqni bekor qilish va eski bazaga ma'lumot yo'qotmasdan yangi ustunlar qo'shishni qamraydi. Username boshqa ID ga o'tsa ovoz yaratilishidan oldin rad etilishi tekshirildi.
+115 ta test o'tdi. Panel testlari autentifikatsiya, CSRF, boshqa origin'dan yozishni rad etish, login urinishlarini cheklash, logout, maxfiy fayllarni bermaslik, reja/eslatma tahrirlash, kontaktni tekshirish va jonli ruxsat ro'yxatini yangilash, ruxsatni Telegramsiz bekor qilish, takroriy qo'ng'iroqni bostirish, keyingi vaqtga saqlash, kechikkan topshiriqni bekor qilish va eski bazaga ma'lumot yo'qotmasdan yangi ustunlar qo'shishni qamraydi. Username boshqa ID ga o'tsa ovoz yaratilishidan oldin rad etilishi tekshirildi.
 
 `ruff check .`, JavaScript fayllarida `node --check`, PowerShell parser tekshiruvi, `uv lock --check` va `git diff --check` o'tdi. Haqiqiy Gemini bilan o'zgartirilgan tool sxemasi bitta qisqa suhbatda qabul qilindi; haqiqiy reja yoki qo'ng'iroq topshirig'i yaratilmagan.
 
 Izolyatsiyalangan sinov bazasi bilan brauzerda parol orqali kirish, reja yaratish va suhbat yuborish tekshirildi. 1440px kompyuter va 390px telefon ko'rinishlari ko'rib chiqildi; telefon ko'rinishi gorizontal chiqib ketmadi. Ko'rinish rasmlarida sinov ma'lumotlari bor. Asosiy ma'lumotlar bazasiga sinov rejalari yoki kontaktlar qo'shilmadi.
 
-Haqiqiy mahalliy panel `127.0.0.1:8765` da ochildi. Navbat va kutilayotgan eslatmalar bo'sh ekanligi tekshirilgach, API orqali haqiqiy Telegram agenti ishga tushirildi: holati `running` bo'ldi. Keyin `stop` muvaffaqiyatli qaytib, holati `stopped` bo'ldi. Ushbu tekshiruvda kontaktga qo'ng'iroq yoki Telegram xabari yuborilmadi. Manifest va ikki PNG ikoni HTTP 200 qaytardi. Haqiqiy panelga brauzerdan kirildi va foydalanuvchi uchun ochiq qoldirildi.
+Haqiqiy mahalliy panel `127.0.0.1:8765` da ochildi. Navbat va kutilayotgan eslatmalar bo'sh ekanligi tekshirilgach, API orqali haqiqiy Telegram agenti ishga tushirildi: holati `running` bo'ldi. Keyin `stop` muvaffaqiyatli qaytib, holati `stopped` bo'ldi. Ushbu tekshiruvda kontaktga qo'ng'iroq yoki Telegram xabari yuborilmadi. Manifest va ikki PNG ikoni HTTP 200 qaytardi. Haqiqiy panelga brauzerdan kirildi va foydalanuvchi uchun ochiq qoldirildi. Keyingi tuzatishda panel ochilishi bilan Telegram worker ham avtomatik boshlanadi; 14-panel testi qayta start takroriy worker yaratmasligini va panel yopilganda worker ham yopilishini tekshiradi.
 
 LAN'dagi boshqa telefon, HTTPS, PWA o'rnatish va server deployment bu sinovga kirmaydi. Quyidagi eski tekshiruv qaydlari o'zlari bajarilgan bosqichni tasvirlaydi; joriy panel tekshiruvi yuqorida.
+
+Panel avtomatik start tuzatishidan keyin haqiqiy brauzerda `Agent ishlayapti` holati ko'rindi. Suhbat formasidan yuborilgan savolga haqiqiy Gemini javobi qaytdi; mock ishlatilmadi. Telegram agenti tekshiruv oxirida ishlayotgan holatda qoldirildi. Ushbu tekshiruvda ovozli qo'ng'iroq boshlanmadi.
 
 - Python 3.12.13
 - py-tgcalls 3.0.0, NTgCalls 3.0.6, Telethon 1.45.0
@@ -21,7 +23,7 @@ LAN'dagi boshqa telefon, HTTPS, PWA o'rnatish va server deployment bu sinovga ki
 - NTgCalls native DLL importi: muvaffaqiyatli.
 - 48 kHz mono PCM jonli jo'natish va qabul qilish konfiguratsiyalari: yaratildi.
 - `ruff check telegram_agent tests`: muvaffaqiyatli.
-- `python -m pytest -q`: **114 passed**. Panelning 13 ta testi `-W error` bilan ham o'tdi.
+- `python -m pytest -q`: **115 passed**. Panelning 14 ta testi `-W error` bilan ham o'tdi.
 - `uv lock --check`: muvaffaqiyatli.
 - Barcha PowerShell skriptlarining sintaksisi: tekshirildi.
 

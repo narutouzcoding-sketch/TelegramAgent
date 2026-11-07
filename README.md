@@ -4,11 +4,11 @@ Telegram ichida yozishadigan, ovozli xabarga javob beradigan, shaxsiy qo'ng'iroq
 
 ## Hozirgi holat
 
-Windows uchun mahalliy web boshqaruv paneli, Telegram agenti, Python 3.12 muhiti va `uv.lock` tayyor. Panel orqali haqiqiy Telegram agentini ishga tushirish/to'xtatish tekshirildi; 114 avtomatlashtirilgan test o'tdi. Gemini va bepul ovoz rejimi ishlatilishi mumkin. OpenAI ovoz sinovi billing/kvota xatosi bilan tugagan. Yangi o'rnatishda qo'ng'iroqlar standart holatda o'chirilgan. Serverga joylash va HTTPS hali bajarilmagan.
+Windows uchun mahalliy web boshqaruv paneli, Telegram agenti, Python 3.12 muhiti va `uv.lock` tayyor. Panel orqali haqiqiy Telegram agentini ishga tushirish/to'xtatish tekshirildi; 115 avtomatlashtirilgan test o'tdi. Gemini va bepul ovoz rejimi ishlatilishi mumkin. OpenAI ovoz sinovi billing/kvota xatosi bilan tugagan. Yangi o'rnatishda qo'ng'iroqlar standart holatda o'chirilgan. Serverga joylash va HTTPS hali bajarilmagan.
 
 ## Boshqaruv paneli
 
-Sozlangan kompyuterda **`open-panel.cmd` faylini ikki marta bosing**. Brauzerda [shaxsiy panel](http://127.0.0.1:8765/) ochiladi; birinchi parol `data/panel-password.txt` faylida. Panel fonda ishlaydi, ochilgan terminalni yopish mumkin. Panel ishga tushganda Telegramga avtomatik ulanmaydi: bosh sahifadagi **Agentni ishga tushirish** tugmasini bosing. Oldingi `start.ps1` jarayoni ishlayotgan bo'lsa, uni avval `Ctrl+C` bilan to'xtating; bitta Telegram sessiyasi bir vaqtda bitta jarayonda ochiladi.
+Sozlangan kompyuterda **`open-panel.cmd` faylini ikki marta bosing**. Brauzerda [shaxsiy panel](http://127.0.0.1:8765/) ochiladi; birinchi parol `data/panel-password.txt` faylida. Panel fonda ishlaydi, ochilgan terminalni yopish mumkin. Panel ochilganda Telegram agenti ham avtomatik ulanadi. Bosh sahifada uning ulanish holati ko'rinadi; agentni shu yerdan to'xtatish va yana ishga tushirish mumkin. Oldingi `start.ps1` jarayoni ishlayotgan bo'lsa, uni avval `Ctrl+C` bilan to'xtating; bitta Telegram sessiyasi bir vaqtda bitta jarayonda ochiladi.
 
 Panelda quyidagilar bor:
 

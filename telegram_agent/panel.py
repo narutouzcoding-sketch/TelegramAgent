@@ -456,6 +456,9 @@ async def serve_panel(settings, host="127.0.0.1", port=8765):
     try:
         await runner.setup()
         await web.TCPSite(runner, host, port).start()
+        # Opening the control panel should also bring the Telegram worker online.
+        # Keep the HTTP server available even if Telegram login needs attention.
+        await control.start()
         print(f"Boshqaruv paneli: http://127.0.0.1:{port}", flush=True)
         print(
             "Panel paroli: data/panel-password.txt faylida. API kalitlari panelga chiqarilmaydi.",

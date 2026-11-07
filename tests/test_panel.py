@@ -57,6 +57,41 @@ async def test_private_state_requires_login_and_writes_require_csrf(panel):
     assert (await client.get("/api/stop")).status == 405
 
 
+async def test_opening_panel_starts_one_telegram_worker_and_shutdown_closes_it(
+    brain, tmp_path, monkeypatch
+):
+    from telegram_agent import panel as module
+
+    started, stopped = asyncio.Event(), asyncio.Event()
+
+    class Worker:
+        def __init__(self, settings):
+            self.ready = asyncio.Event()
+
+        async def run(self):
+            self.ready.set()
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                stopped.set()
+
+    control = PanelControl(brain.settings, root=tmp_path, agent_factory=Worker)
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+    monkeypatch.setattr(module, "PanelControl", lambda _: control)
+    server = asyncio.create_task(module.serve_panel(brain.settings, port=0))
+    try:
+        await asyncio.wait_for(started.wait(), 5)
+        assert control.connected
+        task = control.task
+        assert (await control.start())["already_running"]
+        assert control.task is task
+    finally:
+        control.shutdown.set()
+        await asyncio.wait_for(server, 5)
+    assert stopped.is_set()
+
+
 async def test_cross_origin_commands_and_login_are_denied(panel):
     control, client = panel
     response = await client.post(
