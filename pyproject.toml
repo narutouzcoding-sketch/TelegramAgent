@@ -8,6 +8,9 @@ dependencies = [
   "openai>=1.100,<4",
   "python-dotenv>=1.0,<2",
   "tzdata>=2025.1",
+  "faster-whisper>=1.2,<2",
+  "edge-tts>=7.2,<8",
+  "av>=11,<17",
 ]
 
 [dependency-groups]

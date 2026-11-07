@@ -34,6 +34,9 @@ class Settings:
     transcribe_model: str = "gpt-4o-mini-transcribe"
     tts_model: str = "gpt-4o-mini-tts"
     voice: str = "marin"
+    voice_provider: str = "openai"
+    local_stt_model: str = "small"
+    free_tts_voice: str = "uz-UZ-MadinaNeural"
     max_call_seconds: int = 900
     ring_timeout_seconds: int = 35
     reminder_grace_hours: int = 24
@@ -91,6 +94,9 @@ class Settings:
             transcribe_model=os.getenv("TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe"),
             tts_model=os.getenv("TTS_MODEL", "gpt-4o-mini-tts"),
             voice=os.getenv("VOICE", "marin"),
+            voice_provider=os.getenv("VOICE_PROVIDER", "openai").strip().lower(),
+            local_stt_model=os.getenv("LOCAL_STT_MODEL", "small").strip(),
+            free_tts_voice=os.getenv("FREE_TTS_VOICE", "uz-UZ-MadinaNeural").strip(),
             max_call_seconds=int(os.getenv("MAX_CALL_SECONDS", "900")),
             ring_timeout_seconds=int(os.getenv("RING_TIMEOUT_SECONDS", "35")),
             reminder_grace_hours=int(os.getenv("REMINDER_GRACE_HOURS", "24")),
@@ -107,15 +113,25 @@ class Settings:
             max_calls_per_hour=int(os.getenv("MAX_CALLS_PER_HOUR", "3")),
         )
         ZoneInfo(result.timezone)
+        if result.voice_provider not in {"openai", "free"}:
+            raise ValueError("VOICE_PROVIDER openai yoki free bo'lishi kerak.")
+        if result.local_stt_model not in {"tiny", "base", "small", "medium"}:
+            raise ValueError("LOCAL_STT_MODEL: tiny, base, small yoki medium.")
+        if result.free_tts_voice not in {"uz-UZ-MadinaNeural", "uz-UZ-SardorNeural"}:
+            raise ValueError("FREE_TTS_VOICE: uz-UZ-MadinaNeural yoki uz-UZ-SardorNeural.")
         if result.text_provider not in {"auto", "openai", "gemini"}:
             raise ValueError("TEXT_PROVIDER auto, openai yoki gemini bo'lishi kerak.")
+        if result.voice_provider == "free" and result.resolved_text_provider != "gemini":
+            raise ValueError(
+                "VOICE_PROVIDER=free uchun GEMINI_API_KEY va TEXT_PROVIDER=gemini kerak."
+            )
         if result.text_provider == "gemini" and not result.gemini_key:
             raise ValueError("TEXT_PROVIDER=gemini uchun GEMINI_API_KEY ni kiriting.")
         if result.text_provider == "openai" and not result.openai_key:
             raise ValueError("TEXT_PROVIDER=openai uchun OPENAI_API_KEY ni kiriting.")
         if not result.openai_key and not result.gemini_key:
             raise ValueError(
-                "GEMINI_API_KEY yoki OPENAI_API_KEY kerak. Jonli ovoz uchun OPENAI_API_KEY ham zarur."
+                "GEMINI_API_KEY yoki OPENAI_API_KEY kerak. Bepul ovoz uchun Gemini va VOICE_PROVIDER=free tanlang."
             )
         if result.gemini_reasoning_effort not in {"minimal", "low", "medium", "high"}:
             raise ValueError("GEMINI_REASONING_EFFORT: minimal, low, medium yoki high.")

@@ -37,7 +37,7 @@ Misol: «Ertaga 09:00 da dars qilishimni qo'ng'iroq qilib eslat.»
 «Har kuni 20:30 da ingliz tilini o'rganishni eslat.»
 «Rejamga kitob o'qishni qo'sh.»
 
-Ovoz AI tomonidan yaratiladi. Suhbatning so'nggi matnlari shu kompyuterda saqlanadi; matn tanlangan Gemini/OpenAI xizmatiga, ovoz OpenAI xizmatiga yuboriladi.
+Ovoz AI tomonidan yaratiladi. Suhbatning so'nggi matnlari shu kompyuterda saqlanadi. Matn tanlangan Gemini/OpenAI xizmatiga yuboriladi. Bepul rejimda ovoz shu kompyuterda taniladi, javob matni Edge ovoz xizmatiga yuboriladi; OpenAI rejimida ovoz OpenAI ga yuboriladi.
 Eslatish uchun dastur, kompyuter va internet ishlashi kerak."""
 
 
@@ -251,14 +251,17 @@ class AgentApp:
             raise TelegramPaused(
                 "Ovozli qo'ng'iroqlar hozir o'chirilgan. Avval matnli sinov va AI billing tekshiruvi yakunlanadi."
             )
-        if not self.settings.openai_key:
+        if self.settings.voice_provider == "openai" and not self.settings.openai_key:
             raise AIUnavailable(
                 "Jonli ovozli qo'ng'iroq uchun OPENAI_API_KEY kerak. Gemini matnli suhbat va rejalarga ulangan."
             )
         from pytgcalls.types import CallConfig, Device, ExternalMedia, MediaStream, RecordStream
         from pytgcalls.types.raw import AudioParameters
 
-        from .voice import VoiceSession
+        if self.settings.voice_provider == "free":
+            from .free_voice import FreeVoiceSession as VoiceSession
+        else:
+            from .voice import VoiceSession
 
         if self.call_lock.locked():
             raise RuntimeError("Call already active")
@@ -271,6 +274,8 @@ class AgentApp:
 
             voice = VoiceSession(self.brain, send, introduction)
             try:
+                if self.settings.voice_provider == "free":
+                    await self.brain.free_speech.prepare()
                 # play() returns when the peer has answered and media is connected.
                 async with asyncio.timeout(self.settings.ring_timeout_seconds + 45):
                     await self.policy.dial(
@@ -381,6 +386,7 @@ class AgentApp:
                 f"Eslatmalar: {len(self.store.list_reminders())}. "
                 f"Rejalar: {len(self.store.list_plans())}. "
                 f"Matn AI: {self.settings.resolved_text_provider}. "
+                f"Ovoz xizmati: {self.settings.voice_provider}. "
                 f"Ovozli qo'ng'iroq: {'yoqilgan' if self.settings.enable_voice_calls else 'o‘chirilgan'}. "
                 f"Kontaktlarga qo'ng'iroq: {'yoqilgan' if self.settings.enable_contact_calls else 'o‘chirilgan'}."
             )

@@ -6,6 +6,18 @@ Telegram ichida yozishadigan, ovozli xabarga javob beradigan, shaxsiy qo'ng'iroq
 
 Kod, Python 3.12 virtual muhiti, kutubxonalar, `uv.lock`, sozlash skriptlari va mahalliy testlar tayyor. Dastlab faqat egasi bilan yozishish, rejalar va matnli eslatmalar ishlaydi. Qo'ng'iroqlar standart holatda o'chirilgan. Haqiqiy Gemini generatsiyasi va reja tool chaqiruvi sinovdan o'tdi; OpenAI ovoz sinovi billing/kvota xatosi bilan tugadi. Jonli Telegram qo'ng'iroqlari hali tasdiqlanmagan.
 
+### Bepul ovozli rejim
+
+`VOICE_PROVIDER=free` va `TEXT_PROVIDER=gemini` tanlanganda OpenAI API ishlatilmaydi. Ovoz shu kompyuterda [faster-whisper](https://github.com/SYSTRAN/faster-whisper) `small` modeli, CPU/int8 orqali taniladi. Javob matni mavjud Gemini kaliti orqali olinadi. [edge-tts](https://github.com/rany2/edge-tts) o'zbekcha `uz-UZ-MadinaNeural` yoki `uz-UZ-SardorNeural` bilan ovoz yaratadi; javob matni Edge onlayn xizmatiga yuboriladi. Bu to'liq oflayn tizim emas. Edge TTS kafolatlangan rasmiy pulli API o'rnini bosmaydi va xizmat o'zgarishi mumkin. Gemini bepul kvotasi tugasa, pulli provayderga avtomatik o'tilmaydi.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\free-voice.ps1 -EnableCalls
+```
+
+Buyruq birinchi marta modelni `data/models/` ga yuklaydi (taxminan 0.5 GB), vaqtinchalik bazada ovoz -> matn -> Gemini -> ovoz -> PCM48 ni sinaydi. Haqiqiy Telegram sessiyasi va bazasi ochilmaydi. Barcha bosqichlar o'tgach, egasi uchun qo'ng'iroqlar yoqiladi; kontakt qo'ng'iroqlari o'chiq qoladi. Agent ishlayotgan oynada `Ctrl+C`, keyin `start.ps1` ni qayta bajaring. Telegramda `/status` ovoz xizmati `free` ekanini ko'rsatishi kerak; keyin `/call` yuboring.
+
+Bepul jonli rejim **navbat bilan** ishlaydi: gapiring, taxminan 1 soniya to'xtang va agent javobini kuting. Agent o'ylayotgan yoki gapirayotgan paytda kiruvchi ovoz tashlab yuboriladi; gapini bo'lib boshqarish bu rejimda yo'q. Bitta gap bo'lagi 15 soniyagacha, ovozli xabar 90 soniyagacha. Talaffuz va tanish sifati o'zgaradi, ayniqsa ism, raqam va aniq vaqtlarni qayta tekshiring. Gemini/Edge uchun internet, model uchun protsessor va xotira kerak. Ushbu kompyuterda mahalliy pipeline ishladi; haqiqiy ikki tomonlama Telegram ovozi foydalanuvchi bilan hali tekshiriladi.
+
 ### Cheklovdan keyin boshlash
 
 Akkaunt ochilgach, eski sessiya avtorizatsiyadan chiqqan bo'lsa `login.ps1` ni bir marta bajaring, keyin `start.ps1` ni ishga tushiring. Login kodi va 2FA parolini faqat mahalliy terminalga kiriting. Asosiy akkauntingizdan `/status`, so'ng `Salom` yuboring. Dastur avtomatik boshqa odamlarga yozmaydi. Boshqaruvchi ID siga mos kelmagan xabarlar AI ga yuborilmaydi.
@@ -25,7 +37,7 @@ Matnli javob bo'laklari orasida kamida 2 soniya kutish bor. Qo'ng'iroq keyinchal
 
 `FLOOD_WAIT` kelsa kutish muddati saqlanadi va agent to'xtaydi; uni erta qayta ochish yuborishni davom ettirmaydi. `PEER_FLOOD`, freeze yoki akkaunt bloklanishi xatolari ham faol ishni to'xtatadi. Avtomatik qayta terish va RPC ni cheklovdan keyin qayta yuborish o'chirilgan. Manba: [Telegram RPC errors](https://core.telegram.org/api/errors).
 
-OpenAI billing/kvotasi ishlagach, avval faqat o'zingiz bilan ovozni sinash uchun `ENABLE_VOICE_CALLS=true` qo'yiladi. Boshqalarga qo'ng'iroq keyinchalik `ENABLE_CONTACT_CALLS=true` va `ALLOWED_CALL_USER_IDS` ichida ularning Telegram raqamli ID si ko'rsatilgandagina ishlaydi. Kontakt oldindan rozilik bildirgan bo'lishi kerak; aniq topshirig'ingizsiz agent o'zi qo'ng'iroq qilmaydi. Oddiy SIM raqamiga mobil qo'ng'iroq bu loyihada mavjud emas.
+Bepul ovoz sinovi o'tgach yoki OpenAI billing/kvotasi ishlagach, avval faqat o'zingiz bilan ovozni sinash uchun `ENABLE_VOICE_CALLS=true` qo'yiladi. Boshqalarga qo'ng'iroq keyinchalik `ENABLE_CONTACT_CALLS=true` va `ALLOWED_CALL_USER_IDS` ichida ularning Telegram raqamli ID si ko'rsatilgandagina ishlaydi. Kontakt oldindan rozilik bildirgan bo'lishi kerak; aniq topshirig'ingizsiz agent o'zi qo'ng'iroq qilmaydi. Oddiy SIM raqamiga mobil qo'ng'iroq bu loyihada mavjud emas.
 
 ### Telegramsiz mahalliy sinov
 
@@ -35,13 +47,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\sandbox.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\sandbox.ps1 -SelfTest
 ```
 
-Bu rejim Telegram sessiyasini ochmaydi va haqiqiy bazaga tegmaydi. Vaqtinchalik sinov ma'lumotlari chiqishda o'chiriladi. `/demo` 3 soniyadan so'ng terminalda eslatadi. AI so'rovi tanlangan xizmat kvotasini ishlatadi. `/say MATN` yoki `-SelfTest -Speech` alohida OpenAI ovoz so'rovini yuboradi; ovoz sinovi standart holatda bajarilmaydi. Mahalliy sinov jonli Telegram ovozini isbotlamaydi.
+Bu rejim Telegram sessiyasini ochmaydi va haqiqiy bazaga tegmaydi. Vaqtinchalik sinov ma'lumotlari chiqishda o'chiriladi. `/demo` 3 soniyadan so'ng terminalda eslatadi. AI so'rovi tanlangan xizmat kvotasini ishlatadi. `/say MATN` yoki `-SelfTest -Speech` tanlangan ovoz xizmatini ishlatadi (OpenAI rejimida pulli); ovoz sinovi standart holatda bajarilmaydi. Mahalliy sinov jonli Telegram ovozini isbotlamaydi.
 
 ## Nima kerak?
 
 1. **Yordamchi uchun alohida oddiy Telegram akkaunti.** O'zingizning asosiy akkauntingizdan shu akkauntga qo'ng'iroq qilasiz. Agent shu alohida akkauntga kiradi. BotFather tokeni kerak emas. Telegram `phone.requestCall` usulini faqat foydalanuvchi akkauntlariga beradi: [rasmiy Telegram API](https://core.telegram.org/method/phone.requestCall).
 2. [my.telegram.org/apps](https://my.telegram.org/apps) sahifasidan `api_id` va `api_hash`.
-3. Matn va reja uchun [Gemini API key](https://aistudio.google.com/apikey) yoki [OpenAI API key](https://platform.openai.com/api-keys). Jonli qo'ng'iroq, ovoz transkripsiyasi va xabarni ovoz bilan o'qish uchun OpenAI API kaliti ham kerak. Tegishli model ruxsati va billing/kvota ishlashi lozim. Chatdagi obunangiz yoki shu suhbat API kaliti vazifasini bajarmaydi.
+3. Matn va reja uchun [Gemini API key](https://aistudio.google.com/apikey) yoki [OpenAI API key](https://platform.openai.com/api-keys). `VOICE_PROVIDER=free` rejimida Gemini kaliti va mahalliy model yetarli. `VOICE_PROVIDER=openai` rejimida jonli qo'ng'iroq va ovoz uchun OpenAI API kaliti ham kerak. Tegishli model ruxsati va billing/kvota ishlashi lozim. Chatdagi obunangiz yoki shu suhbat API kaliti vazifasini bajarmaydi.
 4. Asosiy Telegram akkauntingizdan yordamchiga bir martalik `/pair` xabarini yuborish imkoniyati. Username yoki ID ni oldindan bilish shart emas. Agent faqat tasdiqlangan raqamli ID bilan ishlaydi.
 5. Kompyuter yoqilgan, uyqu holatiga kirmagan va internetga ulangan bo'lishi kerak. FFmpeg bu kompyuterda mavjud. Windows uchun NTgCalls native kutubxonasi o'rnatilgan.
 
@@ -74,7 +86,7 @@ cd 'D:\My Projects\TelegramAgent'
 powershell -NoProfile -ExecutionPolicy Bypass -File .\login.ps1
 ```
 
-Login API ID/hash ni qayta so'ramaydi. Telegram kodi yoki 2FA paroli kerak bo'lsa mahalliy oynada so'raydi. Ko'rsatilgan asosiy akkaunt sizniki ekanini tekshiring. OpenAI kaliti hali bo'lmasa ham Telegram sessiyasini tayyorlash mumkin; agentni boshlashdan oldin kalitni `.env` ga kiriting. Login kodi SMS o'rniga yangi akkaunt ochiq turgan Telegram ilovasiga kelishi mumkin.
+Login API ID/hash ni qayta so'ramaydi. Telegram kodi yoki 2FA paroli kerak bo'lsa mahalliy oynada so'raydi. Ko'rsatilgan asosiy akkaunt sizniki ekanini tekshiring. OpenAI kaliti hali bo'lmasa ham Telegram sessiyasini tayyorlash mumkin; agentni boshlashdan oldin kamida Gemini yoki OpenAI kalitini `.env` ga kiriting. Login kodi SMS o'rniga yangi akkaunt ochiq turgan Telegram ilovasiga kelishi mumkin.
 
 Yangi versiyada qo'shilgan `.env.example` maydonlari mavjud `.env` ga o'z-o'zidan ko'chiriladi: eski qiymatlar ustidan yozilmaydi. Buni alohida bajarish uchun `python -m telegram_agent configure` ishlating. `python -m telegram_agent configure --economy` oldingi standart `gpt-realtime-2.1` modelini arzonroq `gpt-realtime-2.1-mini` ga almashtiradi; boshqa maxsus model tanlovlarini o'zgartirmaydi. API kalitlari terminalga chiqarilmaydi.
 
@@ -118,7 +130,7 @@ Freeze bo'lsa, yordamchi akkauntga rasmiy Telegram ilovasida kirib, **Appeal / A
 
 ## Telegramda foydalanish
 
-Yordamchi akkauntiga `/help` yozing. Avval matnli suhbatni sinang. Ovozli rejim alohida yoqilgach, `/call` agentning sizga qo'ng'iroq qilishini boshlaydi. Javob bergach, AI bilan gaplashasiz; gapini bo'lib savol berish mumkin.
+Yordamchi akkauntiga `/help` yozing. Avval matnli suhbatni sinang. Ovozli rejim alohida yoqilgach, `/call` agentning sizga qo'ng'iroq qilishini boshlaydi. Javob bergach, AI bilan gaplashasiz. Bepul rejimda javob tugashini kuting; gapini bo'lib savol berish faqat Realtime rejimida mavjud.
 
 - «Ertaga 09:00 da dars qilishimni qo'ng'iroq qilib eslat.»
 - «10 daqiqadan keyin dam olishni eslat.»
@@ -175,11 +187,11 @@ Standart qo'ng'iroq 15 daqiqa, jiringlash 35 soniya bilan cheklangan. `.env` dag
 
 - `.env` — mahalliy API kalitlari va egasining Telegram ID si. Gitga kiritilmaydi.
 - `data/assistant.session` — yordamchi akkaunt Telegram sessiyasi. Bu fayl akkauntga kirish huquqiga ega; ulashmang.
-- `data/agent.sqlite3` — rejalar, eslatmalar, oxirgi 200 ta suhbat matni va tool natijalari. Jonli qo'ng'iroq audiosi diskka yozilmaydi; ovozli xabarlar vaqtinchalik fayl bilan qayta ishlanadi va keyin o'chiriladi.
+- `data/agent.sqlite3` — rejalar, eslatmalar, oxirgi 200 ta suhbat matni va tool natijalari. Kiruvchi jonli qo'ng'iroq audiosi diskka saqlanmaydi; bepul TTS javobi va ovozli xabarlar vaqtinchalik fayllar bilan qayta ishlanib o'chiriladi.
 - `logs/agent.log` — xato turi va texnik holat. Kod suhbat matnini yoki API kalitini logga yozmaydi.
 - `uv.lock` — tekshirilgan dependency versiyalari.
 
-Matn va ovoz javob olish uchun OpenAI xizmatiga, Telegram xabarlari Telegramga uzatiladi. Mahalliy ma'lumotlar shifrlanmagan; Windows foydalanuvchi akkauntingiz orqali himoyalanadi. Loyiha papkasiga kiradigan odamlardan kalit va sessiyani himoya qiling.
+Matn tanlangan Gemini/OpenAI xizmatiga, Telegram xabarlari Telegramga uzatiladi. Bepul rejimda ovoz mahalliy taniladi va javob matni Edge ovoz xizmatiga yuboriladi; OpenAI rejimida ovoz OpenAI ga yuboriladi. Mahalliy ma'lumotlar shifrlanmagan; Windows foydalanuvchi akkauntingiz orqali himoyalanadi. Loyiha papkasiga kiradigan odamlardan kalit va sessiyani himoya qiling.
 
 Model nomlari `.env` orqali o'zgaradi: `TEXT_MODEL`, `GEMINI_MODEL`, `REALTIME_MODEL`, `TRANSCRIBE_MODEL`, `TTS_MODEL`, `VOICE`. OpenAI matn modeli `gpt-4.1-mini`, Gemini matn modeli `gemini-3.1-flash-lite`, qo'ng'iroq `gpt-realtime-2.1-mini`. Rasmiy manbalar: [Realtime suhbatlar](https://developers.openai.com/api/docs/guides/realtime-conversations), [function calling](https://developers.openai.com/api/docs/guides/function-calling), [text to speech](https://developers.openai.com/api/docs/guides/text-to-speech), [PyTgCalls](https://github.com/pytgcalls/pytgcalls).
 
@@ -202,7 +214,7 @@ Ushbu chegaralar umumiy pul limiti yoki barcha so'rovlar uchun yagona token budj
 
 Eski suhbat konteksti qisqarsa ham rejalar va eslatmalar SQLite bazasidan o'chirilmaydi. Gemini tool chaqiruvining thought signature ma'lumotlari shu so'rov davomida saqlanadi. Token chegarasida uzilgan Gemini tool javobi bajarilmaydi; foydalanuvchiga tekshirish kerakligi bildiriladi. Oddiy `/plans`, `/reminders`, `/calls`, `/status` buyruqlari modelga so'rov yubormaydi.
 
-Jonli ovozli suhbat hamda ovozli xabar transkripsiyasi/TTS **OpenAI orqali** qoladi; Gemini Flash-Lite bu loyihada jonli ovoz modeli emas. Faqat Gemini kaliti bilan yozishmalar va reja/eslatma matnlari ishlaydi, matnli eslatmalar keladi. Ovoz uchun OpenAI kaliti kerak; u bo'lmasa dastur odamga qo'ng'iroq qilishdan oldin sababini bildiradi. Google bepul va pulli rejalarining ma'lumotlardan foydalanish shartlari farqlanishi mumkin; tafsilotlar Google narxlar sahifasida.
+`VOICE_PROVIDER=free` rejimida ovoz Whisper bilan mahalliy taniladi, suhbat va tools Gemini orqali, TTS esa Edge orqali bajariladi. OpenAI kaliti talab qilinmaydi. `VOICE_PROVIDER=openai` rejimida jonli suhbat OpenAI Realtime, transkripsiya/TTS OpenAI orqali ishlaydi. Gemini Flash-Lite ushbu loyihada to'g'ridan-to'g'ri jonli audio modeli emas. Google bepul va pulli rejalarining ma'lumotlardan foydalanish shartlari farqlanishi mumkin; tafsilotlar Google narxlar sahifasida.
 
 ## AI kalitlari va zaxira ulanish
 

@@ -67,7 +67,7 @@ async def setup(from_env=False):
         raise ValueError("OpenAI API key kerak.")
     if not key:
         print(
-            "OpenAI API key hali yo'q. Telegram login mumkin. Gemini kaliti bilan matnli agent ishlaydi; jonli ovoz uchun OpenAI kaliti kerak."
+            "OpenAI API key hali yo'q. Telegram login mumkin. Gemini bilan matnli agent va VOICE_PROVIDER=free orqali bepul ovoz ishlaydi."
         )
     saved_phone = existing.get("TELEGRAM_PHONE", "") if from_env else ""
     if saved_phone:
@@ -187,7 +187,7 @@ async def doctor(online=False):
                 print(f"Gemini model ro'yxatda mavjud: {settings.gemini_model}")
             finally:
                 await gemini.close()
-        if settings.openai_key:
+        if settings.openai_key and settings.voice_provider == "openai":
             async with AsyncOpenAI(api_key=settings.openai_key) as ai:
                 models = [settings.realtime_model, settings.transcribe_model, settings.tts_model]
                 if settings.resolved_text_provider == "openai":
@@ -196,7 +196,7 @@ async def doctor(online=False):
                     await ai.models.retrieve(model)
                     print(f"OpenAI model mavjud: {model}")
         else:
-            print("OpenAI ovozli funksiyalari sozlanmagan; Gemini matnli rejimi tanlangan.")
+            print("OpenAI tekshiruvi o'tkazilmadi; bepul yoki Gemini matnli rejimi tanlangan.")
     return 0
 
 
@@ -231,7 +231,16 @@ def main():
     parser = argparse.ArgumentParser(description="Shaxsiy Telegram AI yordamchi")
     parser.add_argument(
         "command",
-        choices=["configure", "setup", "login", "doctor", "telegram-status", "sandbox", "run"],
+        choices=[
+            "configure",
+            "setup",
+            "login",
+            "doctor",
+            "telegram-status",
+            "sandbox",
+            "free-voice-check",
+            "run",
+        ],
     )
     parser.add_argument(
         "--economy",
@@ -245,9 +254,18 @@ def main():
     parser.add_argument(
         "--speech", action="store_true", help="sandbox --self-test: ovoz generatsiyasini ham sinash"
     )
+    parser.add_argument(
+        "--enable-voice",
+        action="store_true",
+        help="free-voice-check: muvaffaqiyatli sinovdan keyin egasi uchun qo'ng'iroqni yoqish",
+    )
     args = parser.parse_args()
     try:
-        if args.command == "sandbox":
+        if args.command == "free-voice-check":
+            from .voice_check import check_free_voice
+
+            return asyncio.run(check_free_voice(enable=args.enable_voice))
+        elif args.command == "sandbox":
             from .sandbox import console, self_test
 
             settings = Settings.load(require_telegram=False)

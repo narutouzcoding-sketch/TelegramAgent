@@ -87,6 +87,11 @@ class Brain:
         self.ai = AIClientPool(settings)
         self.gemini = GeminiText(settings) if settings.resolved_text_provider == "gemini" else None
         self.lock = asyncio.Lock()
+        self.free_speech = None
+        if settings.voice_provider == "free":
+            from .free_speech import FreeSpeech
+
+            self.free_speech = FreeSpeech(settings)
 
     @property
     def client(self):
@@ -233,6 +238,8 @@ class Brain:
         return "Amallar chegarasiga yetdim. /plans, /reminders va /calls bilan natijani tekshiring."
 
     async def transcribe(self, path):
+        if self.free_speech is not None:
+            return await self.free_speech.transcribe(path)
         async def request(client):
             with path.open("rb") as audio:
                 return await client.audio.transcriptions.create(
@@ -245,6 +252,8 @@ class Brain:
         return response.text
 
     async def speech(self, text, path):
+        if self.free_speech is not None:
+            return await self.free_speech.speech(text, path)
         async def request(client):
             async with client.audio.speech.with_streaming_response.create(
                 model=self.settings.tts_model,

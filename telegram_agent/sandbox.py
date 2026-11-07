@@ -19,7 +19,7 @@ HELP = """SINOV rejimi: savol bering yoki reja/eslatma qo'shishni ayting.
 /plans — sinov rejalari; /reminders — sinov eslatmalari
 /calls — qo'ng'iroq topshirig'i qanday tushunilganini ko'rish
 /demo — 3 soniyadan keyin terminalda eslatish (AI so'rovisiz)
-/say MATN — OpenAI orqali ovoz faylini sinash (API xarajati bo'lishi mumkin)
+/say MATN — tanlangan ovoz xizmatini sinash (OpenAI rejimida API xarajati bor)
 /exit — chiqish; sinov bazasi o'chiriladi
 Telegram ulanmaydi, hech kimga qo'ng'iroq qilinmaydi. AI so'rovlari tanlangan xizmatga yuboriladi."""
 
