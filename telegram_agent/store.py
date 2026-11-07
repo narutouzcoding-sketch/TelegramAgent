@@ -56,6 +56,16 @@ class Store:
             id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, created TEXT NOT NULL
           );
         """)
+        # Additive migrations keep existing reminders, contacts and call history intact.
+        for table, additions in {
+            "contacts": {"telegram_id": "INTEGER", "call_allowed": "INTEGER NOT NULL DEFAULT 0"},
+            "outbound_calls": {"due": "TEXT", "recipient_user_id": "INTEGER"},
+        }.items():
+            columns = {row[1] for row in self.db.execute(f"PRAGMA table_info({table})")}
+            for name, declaration in additions.items():
+                if name not in columns:
+                    self.db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {declaration}")
+        self.db.commit()
 
     def add_reminder(self, title, due_at, repeat="none", mode="call"):
         title = self._title(title)
@@ -174,6 +184,30 @@ class Store:
             ).rowcount
         return {"completed": bool(n), "id": plan_id}
 
+    def update_plan(self, plan_id, title, details=""):
+        with self.db:
+            count = self.db.execute(
+                "UPDATE plans SET title=?,details=? WHERE id=? AND status='open'",
+                (self._title(title), str(details)[:4000], plan_id),
+            ).rowcount
+        if not count:
+            raise ValueError("Ochiq reja topilmadi.")
+        return {"saved": True, "id": plan_id}
+
+    def update_reminder(self, reminder_id, title, due_at, repeat="none", mode="message"):
+        title = self._title(title)
+        due = parse_due(due_at, self.timezone)
+        if repeat not in {"none", "daily", "weekly"} or mode not in {"call", "message"}:
+            raise ValueError("Noto'g'ri repeat yoki mode.")
+        with self.db:
+            count = self.db.execute(
+                "UPDATE reminders SET title=?,due=?,repeat=?,mode=?,attempts=0,retry_after=NULL,last_error=NULL WHERE id=? AND state='pending'",
+                (title, due.isoformat(), repeat, mode, reminder_id),
+            ).rowcount
+        if not count:
+            raise ValueError("Kutilayotgan eslatma topilmadi yoki hozir yetkazilmoqda.")
+        return {"saved": True, "id": reminder_id}
+
     def remember(self, role, text):
         if text.strip():
             with self.db:
@@ -272,15 +306,43 @@ class Store:
             dict(row) for row in self.db.execute("SELECT * FROM contacts ORDER BY name LIMIT 200")
         ]
 
-    def queue_contact_call(self, target, message):
+    def set_contact_permission(self, contact_id, telegram_id, allowed):
+        if telegram_id is not None and (not isinstance(telegram_id, int) or telegram_id <= 0):
+            raise ValueError("Kontaktning Telegram ID si noto'g'ri.")
+        if allowed and not telegram_id:
+            raise ValueError("Avval kontaktning Telegram akkauntini tekshiring.")
+        with self.db:
+            count = self.db.execute(
+                "UPDATE contacts SET telegram_id=?,call_allowed=? WHERE id=?",
+                (telegram_id, int(bool(allowed)), contact_id),
+            ).rowcount
+        if not count:
+            raise ValueError("Kontakt topilmadi.")
+        return {"saved": True, "id": contact_id}
+
+    def approved_contact_ids(self):
+        return tuple(
+            row[0]
+            for row in self.db.execute(
+                "SELECT DISTINCT telegram_id FROM contacts WHERE call_allowed=1 AND telegram_id IS NOT NULL"
+            )
+        )
+
+    def delete_contact(self, contact_id):
+        with self.db:
+            count = self.db.execute("DELETE FROM contacts WHERE id=?", (contact_id,)).rowcount
+        return {"deleted": bool(count)}
+
+    def queue_contact_call(self, target, message, due_at=None, recipient_user_id=None):
         if not isinstance(target, str) or not target.strip() or len(target) > 200:
             raise ValueError("Aniq kontakt ismi, @username yoki +mamlakat_kodi bilan raqam kerak.")
         if not isinstance(message, str) or not message.strip() or len(message) > 1500:
             raise ValueError("Yetkaziladigan gap 1..1500 belgidan iborat bo'lishi kerak.")
+        due = parse_due(due_at, self.timezone).isoformat() if due_at else None
         existing = self.db.execute(
             "SELECT id,state FROM outbound_calls WHERE target=? AND message=? "
-            "AND state IN ('queued','running') ORDER BY id LIMIT 1",
-            (target.strip(), message.strip()),
+            "AND state IN ('queued','running') AND due IS ? ORDER BY id LIMIT 1",
+            (target.strip(), message.strip(), due),
         ).fetchone()
         if existing:
             return {
@@ -301,8 +363,8 @@ class Store:
             raise ValueError("Navbatda 10 ta topshiriq bor. Avval ularning yakunlanishini kuting.")
         with self.db:
             cursor = self.db.execute(
-                "INSERT INTO outbound_calls(target,message,created) VALUES(?,?,?)",
-                (target.strip(), message.strip(), utc_now().isoformat()),
+                "INSERT INTO outbound_calls(target,message,created,due,recipient_user_id) VALUES(?,?,?,?,?)",
+                (target.strip(), message.strip(), utc_now().isoformat(), due, recipient_user_id),
             )
         return {
             "queued": True,
@@ -310,6 +372,7 @@ class Store:
             "target": target.strip(),
             "message": message.strip(),
             "status": "queued",
+            "due_at": due,
             "channel": "telegram",
             "note": "Siz bilan faol qo'ng'iroq tugagach bajariladi. Hali yetkazilmadi.",
         }
@@ -332,10 +395,19 @@ class Store:
             "note": "Faol qo'ng'iroqni /hangup bilan to'xtating.",
         }
 
-    def claim_contact_call(self):
+    def claim_contact_call(self, now=None):
+        now = now or utc_now()
         with self.db:
+            self.db.execute(
+                "UPDATE outbound_calls SET state='cancelled',result=? WHERE state='queued' AND due IS NOT NULL AND due<?",
+                (
+                    "Belgilangan vaqtdan 5 daqiqa o'tdi; qayta terilmadi.",
+                    (now - timedelta(minutes=5)).isoformat(),
+                ),
+            )
             row = self.db.execute(
-                "SELECT * FROM outbound_calls WHERE state='queued' ORDER BY id LIMIT 1"
+                "SELECT * FROM outbound_calls WHERE state='queued' AND (due IS NULL OR due<=?) ORDER BY COALESCE(due,created),id LIMIT 1",
+                (now.isoformat(),),
             ).fetchone()
             if row:
                 self.db.execute(
@@ -359,6 +431,6 @@ class Store:
                 "UPDATE outbound_calls SET state='interrupted',result='Agent qayta ishga tushdi; qayta terilmadi.' WHERE state='running'"
             )
             self.db.execute(
-                "UPDATE outbound_calls SET state='cancelled',result='Topshiriq 10 daqiqadan ortiq eskirgan.' WHERE state='queued' AND created<?",
+                "UPDATE outbound_calls SET state='cancelled',result='Topshiriq 10 daqiqadan ortiq eskirgan.' WHERE state='queued' AND COALESCE(due,created)<?",
                 ((utc_now() - timedelta(minutes=10)).isoformat(),),
             )

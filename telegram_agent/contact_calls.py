@@ -16,6 +16,10 @@ from .config import ROOT
 from .setup_inputs import international_phone
 
 
+def relay_text(owner_name, message):
+    return f"Assalomu alaykum. Men {owner_name}ning AI yordamchisiman. U sizga quyidagi xabarni yetkazishimni so'radi. {message}. Rahmat."
+
+
 class RecipientResolver:
     def __init__(self, client, store, own_id):
         self.client, self.store, self.own_id = client, store, own_id
@@ -160,15 +164,14 @@ async def execute_job(app, job):
         ):
             raise ValueError("Kontakt qo'ng'iroqlari o'chirilgan; telefon terilmadi.")
         user = await app.policy.action(lambda: app.recipient_resolver.resolve(job["target"]))
+        if job.get("recipient_user_id") and user.id != job["recipient_user_id"]:
+            raise ValueError("Kontaktning akkaunti o'zgargan; qo'ng'iroq qilinmadi.")
         if user.id not in app.settings.allowed_call_user_ids:
             raise ValueError(
                 "Bu foydalanuvchi ruxsat berilgan kontaktlar ro'yxatida yo'q; telefon terilmadi."
             )
         await app.send_text(f"Qo'ng'iroq #{job['id']}: {job['target']} uchun xabar tayyorlanyapti.")
-        text = (
-            f"Assalomu alaykum. Men {app.owner_name}ning AI yordamchisiman. "
-            "U sizga quyidagi xabarni yetkazishimni so'radi. " + job["message"] + ". Rahmat."
-        )
+        text = relay_text(app.owner_name, job["message"])
         with tempfile.TemporaryDirectory(dir=ROOT / "data", prefix="relay-") as folder:
             path = Path(folder) / "message.ogg"
             await app.brain.speech(text, path)
@@ -203,6 +206,9 @@ async def execute_job(app, job):
 async def run_queue(app):
     app.store.recover_contact_calls()
     while True:
+        if not app.settings.enable_contact_calls or not app.settings.allowed_call_user_ids:
+            await asyncio.sleep(1)
+            continue
         if app.call_lock.locked():
             await asyncio.sleep(1)
             continue

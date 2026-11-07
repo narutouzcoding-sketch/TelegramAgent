@@ -4,7 +4,35 @@ Telegram ichida yozishadigan, ovozli xabarga javob beradigan, shaxsiy qo'ng'iroq
 
 ## Hozirgi holat
 
-Kod, Python 3.12 virtual muhiti, kutubxonalar, `uv.lock`, sozlash skriptlari va mahalliy testlar tayyor. Dastlab faqat egasi bilan yozishish, rejalar va matnli eslatmalar ishlaydi. Qo'ng'iroqlar standart holatda o'chirilgan. Haqiqiy Gemini generatsiyasi va reja tool chaqiruvi sinovdan o'tdi; OpenAI ovoz sinovi billing/kvota xatosi bilan tugadi. Jonli Telegram qo'ng'iroqlari hali tasdiqlanmagan.
+Windows uchun mahalliy web boshqaruv paneli, Telegram agenti, Python 3.12 muhiti va `uv.lock` tayyor. Panel orqali haqiqiy Telegram agentini ishga tushirish/to'xtatish tekshirildi; 114 avtomatlashtirilgan test o'tdi. Gemini va bepul ovoz rejimi ishlatilishi mumkin. OpenAI ovoz sinovi billing/kvota xatosi bilan tugagan. Yangi o'rnatishda qo'ng'iroqlar standart holatda o'chirilgan. Serverga joylash va HTTPS hali bajarilmagan.
+
+## Boshqaruv paneli
+
+Sozlangan kompyuterda **`open-panel.cmd` faylini ikki marta bosing**. Brauzerda [shaxsiy panel](http://127.0.0.1:8765/) ochiladi; birinchi parol `data/panel-password.txt` faylida. Panel fonda ishlaydi, ochilgan terminalni yopish mumkin. Panel ishga tushganda Telegramga avtomatik ulanmaydi: bosh sahifadagi **Agentni ishga tushirish** tugmasini bosing. Oldingi `start.ps1` jarayoni ishlayotgan bo'lsa, uni avval `Ctrl+C` bilan to'xtating; bitta Telegram sessiyasi bir vaqtda bitta jarayonda ochiladi.
+
+Panelda quyidagilar bor:
+
+- Gemini bilan suhbat, rejalarni qo'shish/tahrirlash/yakunlash.
+- Eslatmalarni yaratish/tahrirlash/bekor qilish; xabar yoki o'zingizga qo'ng'iroq.
+- Kontakt saqlash va faol Telegram ulanishida **Tekshirish va ruxsat berish**. Tekshirish o'zi qo'ng'iroq qilmaydi. Aniq Telegram ID bazada saqlanadi va ruxsat agentga qayta ishga tushirmasdan qo'llanadi.
+- Kontaktga aytiladigan aniq matn, bepul ovozni oldindan eshitish, hozir yoki Toshkent vaqti bo'yicha keyinga qo'ng'iroq topshirish.
+- Navbat va qo'ng'iroq tarixi, faol qo'ng'iroqni tugatish. “Audio uzatildi” qabul qiluvchi eshitganini alohida isbotlamaydi.
+
+Keyingi vaqtga qo'ng'iroq SQLite bazasida saqlanadi. Agent o'chib qolsa, kelajakdagi topshiriq restartdan keyin saqlanadi; 5 daqiqadan ortiq kechikkan qo'ng'iroq bajarilmaydi. Uzilib qolgan yoki javobsiz qo'ng'iroq avtomatik qayta terilmaydi. Kontaktga ruxsatni olib tashlash yoki kontaktni o'chirish kelajakdagi ruxsatlar ro'yxatini yangilaydi; faol qo'ng'iroqni tugatish uchun alohida tugma bor. `.env` dagi qo'lda berilgan `ALLOWED_CALL_USER_IDS` paneldagi kontaktlardan alohida ruxsat hisoblanadi.
+
+Panel parol bilan himoyalangan; API kalitlari brauzerga berilmaydi. Sessiya HttpOnly/SameSite cookie va CSRF token bilan ishlaydi. Parol, sessiya va ma'lumotlar `data/` ichida, Git'ga kiritilmaydi. Menyudagi **Panelni yopish** agent va panel jarayonini birga to'xtatadi. Oddiy **Agentni to'xtatish** panelni ochiq qoldiradi. `start.ps1` terminal rejimi paneldagi kontakt ruxsatlarini avtomatik o'qimaydi; ushbu paneldan foydalanish tavsiya etiladi.
+
+### Telefonda ochish
+
+Telefonda moslashuvchan web sahifa ishlaydi. Bir xil ishonchli Wi-Fi tarmog'ida ochish uchun panel menyusidan avval panelni yoping, keyin:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\open-panel.ps1 -Lan
+```
+
+Telefon brauzerida `http://KOMPYUTER_IP:8765/` ni oching va mahalliy parol bilan kiring. Windows Firewall alohida mahalliy tarmoq ruxsatini talab qilishi mumkin; skript firewall yoki router sozlamalarini o'zgartirmaydi. Telefoningizdagi `127.0.0.1` kompyuterga ulanmaydi. Oddiy ishga tushirish faqat kompyuterning o'zidan kirishga ruxsat beradi.
+
+PWA manifest, ikonlar va statik sahifa keshi tayyor; shaxsiy API ma'lumotlari keshga yozilmaydi. Android'da ilova sifatida to'liq o'rnatish uchun HTTPS kerak, odatiy LAN HTTP yetarli emas. APK hali yaratilmagan. Kompyuter o'chiq bo'lsa agent ishlamaydi; doimiy server va HTTPS keyingi bosqich.
 
 ### Bepul ovozli rejim
 

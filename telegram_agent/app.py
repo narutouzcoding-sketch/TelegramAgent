@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import tempfile
+import unicodedata
 from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
@@ -70,6 +71,7 @@ class AgentApp:
         self.contact_job_id = None
         self.background_tasks = set()
         self.owner = None
+        self.ready = asyncio.Event()
         self.owner_name = "foydalanuvchi"
         self.recipient_resolver = None
         self.relay_target = None
@@ -93,6 +95,7 @@ class AgentApp:
             self.store.close()
 
     async def _run(self):
+        self.ready = asyncio.Event()
         await self.telegram.connect()
         me = await self.policy.action(
             lambda: ensure_telegram_account(self.telegram, self.settings.timezone)
@@ -109,7 +112,7 @@ class AgentApp:
                 "Asosiy boshqaruvchi akkaunt topilmadi yoki username/ID mos emas. login.ps1 orqali qayta ulang; sessiya o'chirilmaydi."
             )
         self.owner = await self.telegram.get_input_entity(owner_user)
-        self.owner_name = owner_user.first_name or "foydalanuvchi"
+        self.owner_name = unicodedata.normalize("NFKC", owner_user.first_name or "foydalanuvchi")
         from .contact_calls import run_queue
 
         self.telegram.add_event_handler(self.on_message, events.NewMessage(incoming=True))
@@ -119,13 +122,10 @@ class AgentApp:
                 await self._start_call_transport(me.id)
             scheduler = Scheduler(self.store, self.deliver, self.settings.reminder_grace_hours)
             self.scheduler_task = asyncio.create_task(scheduler.run())
-            if (
-                self.settings.enable_voice_calls
-                and self.settings.enable_contact_calls
-                and self.settings.allowed_call_user_ids
-            ):
+            if self.settings.enable_voice_calls:
                 self.contact_queue_task = asyncio.create_task(run_queue(self))
             log.info("Agent started; owner allowlist active")
+            self.ready.set()
             print(
                 "TelegramAgent ishlayapti. "
                 + (

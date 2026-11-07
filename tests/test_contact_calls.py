@@ -191,6 +191,7 @@ async def test_cancelling_one_job_does_not_stop_queue(store, monkeypatch):
     monkeypatch.setattr(contact_calls, "execute_job", job)
     app = SimpleNamespace(
         store=store,
+        settings=SimpleNamespace(enable_contact_calls=True, allowed_call_user_ids=(77,)),
         call_lock=asyncio.Lock(),
         spawn=asyncio.create_task,
         contact_job_task=None,

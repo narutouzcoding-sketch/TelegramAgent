@@ -240,6 +240,7 @@ def main():
             "sandbox",
             "free-voice-check",
             "run",
+            "panel",
         ],
     )
     parser.add_argument(
@@ -259,9 +260,21 @@ def main():
         action="store_true",
         help="free-voice-check: muvaffaqiyatli sinovdan keyin egasi uchun qo'ng'iroqni yoqish",
     )
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        choices=["127.0.0.1", "0.0.0.0"],
+        help="panel: localhost yoki LAN",
+    )
+    parser.add_argument("--port", type=int, default=8765, help="panel: HTTP port")
     args = parser.parse_args()
     try:
-        if args.command == "free-voice-check":
+        if args.command == "panel":
+            from .panel import serve_panel
+
+            with process_lock():
+                asyncio.run(serve_panel(Settings.load(), args.host, args.port))
+        elif args.command == "free-voice-check":
             from .voice_check import check_free_voice
 
             return asyncio.run(check_free_voice(enable=args.enable_voice))
