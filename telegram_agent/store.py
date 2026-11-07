@@ -188,6 +188,20 @@ class Store:
         ).fetchall()
         return [dict(r) for r in reversed(rows)]
 
+    def context(self, limit=10, max_chars=10000):
+        entries = self.history(limit)
+        retained = []
+        size = 0
+        for entry in reversed(entries):
+            if size + len(entry["content"]) > max_chars:
+                break
+            retained.append(entry)
+            size += len(entry["content"])
+        retained.reverse()
+        while retained and retained[0]["role"] != "user":
+            retained.pop(0)
+        return retained
+
     def cached_tool(self, call_id):
         row = self.db.execute(
             "SELECT result FROM tool_results WHERE call_id=?", (call_id,)

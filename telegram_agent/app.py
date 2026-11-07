@@ -212,6 +212,10 @@ class AgentApp:
                 ready.set_exception(ConnectionError("Call ended before connection"))
 
     async def conversation(self, introduction, ready=None):
+        if not self.settings.openai_key:
+            raise AIUnavailable(
+                "Jonli ovozli qo'ng'iroq uchun OPENAI_API_KEY kerak. Gemini matnli suhbat va rejalarga ulangan."
+            )
         from pytgcalls.types import CallConfig, Device, ExternalMedia, MediaStream, RecordStream
         from pytgcalls.types.raw import AudioParameters
 
@@ -314,7 +318,8 @@ class AgentApp:
                 f"Agent ishlayapti. Zona: {self.settings.timezone}. "
                 f"Qo'ng'iroq: {'faol' if self.call_lock.locked() else 'bo‘sh'}. "
                 f"Eslatmalar: {len(self.store.list_reminders())}. "
-                f"Rejalar: {len(self.store.list_plans())}."
+                f"Rejalar: {len(self.store.list_plans())}. "
+                f"Matn AI: {self.settings.resolved_text_provider}."
             )
             return
         if command == "/plans":
@@ -442,7 +447,7 @@ class AgentApp:
                 await self.send_text(
                     (
                         public_ai_error(exc)
-                        if isinstance(exc, APIError)
+                        if isinstance(exc, (APIError, AIUnavailable))
                         else "So'rovni yakunlay olmadim."
                     )
                     + " /reminders va /plans bilan "

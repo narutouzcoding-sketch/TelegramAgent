@@ -10,7 +10,7 @@ Kod, Python 3.12 virtual muhiti, o'rnatilgan kutubxonalar, qat'iy versiyalar yoz
 
 1. **Yordamchi uchun alohida oddiy Telegram akkaunti.** O'zingizning asosiy akkauntingizdan shu akkauntga qo'ng'iroq qilasiz. Agent shu alohida akkauntga kiradi. BotFather tokeni kerak emas. Telegram `phone.requestCall` usulini faqat foydalanuvchi akkauntlariga beradi: [rasmiy Telegram API](https://core.telegram.org/method/phone.requestCall).
 2. [my.telegram.org/apps](https://my.telegram.org/apps) sahifasidan `api_id` va `api_hash`.
-3. [OpenAI API key](https://platform.openai.com/api-keys), tegishli modelga ruxsat va API uchun ishlaydigan billing. Chatdagi obunangiz yoki shu suhbat agent uchun API kaliti vazifasini bajarmaydi. API foydalanish xarajatlari akkauntingizda hisoblanadi; platforma hisobingizdagi billing/ruxsatlarni tekshiring.
+3. Matn va reja uchun [Gemini API key](https://aistudio.google.com/apikey) yoki [OpenAI API key](https://platform.openai.com/api-keys). Jonli qo'ng'iroq, ovoz transkripsiyasi va xabarni ovoz bilan o'qish uchun OpenAI API kaliti ham kerak. Tegishli model ruxsati va billing/kvota ishlashi lozim. Chatdagi obunangiz yoki shu suhbat API kaliti vazifasini bajarmaydi.
 4. Asosiy Telegram akkauntingizdan yordamchiga bir martalik `/pair` xabarini yuborish imkoniyati. Username yoki ID ni oldindan bilish shart emas. Agent faqat tasdiqlangan raqamli ID bilan ishlaydi.
 5. Kompyuter yoqilgan, uyqu holatiga kirmagan va internetga ulangan bo'lishi kerak. FFmpeg bu kompyuterda mavjud. Windows uchun NTgCalls native kutubxonasi o'rnatilgan.
 
@@ -29,6 +29,9 @@ TELEGRAM_PHONE=+mamlakat_kodi_va_yordamchi_raqami
 OWNER_TELEGRAM_USERNAME=
 OWNER_TELEGRAM_ID=
 OPENAI_API_KEY=sizning_openai_api_kalitingiz
+OPENAI_BACKUP_API_KEYS=
+GEMINI_API_KEY=sizning_gemini_api_kalitingiz
+TEXT_PROVIDER=auto
 ```
 
 Bu yuqoridagi qiymatlar namuna; API va telefon qiymatlarini o'zingiznikiga almashtiring. API ID va API hash aynan bitta `my.telegram.org/apps` ilovasidan olinadi. API hash BotFather tokeni yoki OpenAI API kaliti emas. `TELEGRAM_PHONE` yangi yordamchi akkauntning raqami. Ikki `OWNER_...` maydonini avval bo'sh qoldiring.
@@ -41,6 +44,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\login.ps1
 ```
 
 Login API ID/hash ni qayta so'ramaydi. Telegram kodi yoki 2FA paroli kerak bo'lsa mahalliy oynada so'raydi. Ko'rsatilgan asosiy akkaunt sizniki ekanini tekshiring. OpenAI kaliti hali bo'lmasa ham Telegram sessiyasini tayyorlash mumkin; agentni boshlashdan oldin kalitni `.env` ga kiriting. Login kodi SMS o'rniga yangi akkaunt ochiq turgan Telegram ilovasiga kelishi mumkin.
+
+Yangi versiyada qo'shilgan `.env.example` maydonlari mavjud `.env` ga o'z-o'zidan ko'chiriladi: eski qiymatlar ustidan yozilmaydi. Buni alohida bajarish uchun `python -m telegram_agent configure` ishlating. `python -m telegram_agent configure --economy` oldingi standart `gpt-realtime-2.1` modelini arzonroq `gpt-realtime-2.1-mini` ga almashtiradi; boshqa maxsus model tanlovlarini o'zgartirmaydi. API kalitlari terminalga chiqarilmaydi.
 
 Yordamchi akkauntga kirilgach, dastur bir martalik `/pair ...` buyrug'ini ko'rsatadi. Uni **asosiy shaxsiy akkauntingizdan yangi yordamchi akkauntiga** xabar qilib yuboring. Terminal ko'rsatgan asosiy akkaunt sizniki bo'lsa `HA` deb tasdiqlang. ID va mavjud bo'lsa username avtomatik saqlanadi. Ulash kodi 5 daqiqa amal qiladi; uni chat yoki boshqa odamlarga ulashmang.
 
@@ -133,7 +138,28 @@ Standart qo'ng'iroq 15 daqiqa, jiringlash 35 soniya bilan cheklangan. `.env` dag
 
 Matn va ovoz javob olish uchun OpenAI xizmatiga, Telegram xabarlari Telegramga uzatiladi. Mahalliy ma'lumotlar shifrlanmagan; Windows foydalanuvchi akkauntingiz orqali himoyalanadi. Loyiha papkasiga kiradigan odamlardan kalit va sessiyani himoya qiling.
 
-Model nomlari `.env` orqali o'zgaradi: `TEXT_MODEL`, `REALTIME_MODEL`, `TRANSCRIBE_MODEL`, `TTS_MODEL`, `VOICE`. Standart matn modeli `gpt-4.1-mini`, qo'ng'iroq `gpt-realtime-2.1`. Rasmiy manbalar: [Realtime suhbatlar](https://developers.openai.com/api/docs/guides/realtime-conversations), [function calling](https://developers.openai.com/api/docs/guides/function-calling), [text to speech](https://developers.openai.com/api/docs/guides/text-to-speech), [PyTgCalls](https://github.com/pytgcalls/pytgcalls).
+Model nomlari `.env` orqali o'zgaradi: `TEXT_MODEL`, `GEMINI_MODEL`, `REALTIME_MODEL`, `TRANSCRIBE_MODEL`, `TTS_MODEL`, `VOICE`. OpenAI matn modeli `gpt-4.1-mini`, Gemini matn modeli `gemini-3.1-flash-lite`, qo'ng'iroq `gpt-realtime-2.1-mini`. Rasmiy manbalar: [Realtime suhbatlar](https://developers.openai.com/api/docs/guides/realtime-conversations), [function calling](https://developers.openai.com/api/docs/guides/function-calling), [text to speech](https://developers.openai.com/api/docs/guides/text-to-speech), [PyTgCalls](https://github.com/pytgcalls/pytgcalls).
+
+## Gemini va tejamkor sozlamalar
+
+`GEMINI_API_KEY` ni Google AI Studio dan olib faqat mahalliy `.env` ga yozing. `TEXT_PROVIDER=auto` bo'lsa, Gemini kaliti mavjudligida matnli suhbat, reja/eslatma yaratish va kontaktga qo'ng'iroq topshiriqlarini tushunish Gemini orqali ishlaydi. Aks holda OpenAI matn modeli ishlaydi. `TEXT_PROVIDER=gemini` yoki `openai` bilan provayderni qat'iy tanlash mumkin. Bir xizmatdagi kvota tugaganda boshqa xizmatga yashirin o'tish yo'q. `/status` tanlangan matn provayderini ko'rsatadi.
+
+Standart Gemini modeli **`gemini-3.1-flash-lite`**, fikrlash darajasi **`minimal`**. 2026-11-07 kungi tekshiruvda u function calling ni qo'llaydi va 3.5 Flash-Lite dan arzonroq. Eski 2.5 Flash-Lite ga kirish yangi foydalanuvchilar uchun cheklangani sabab yangi ulanishda u tanlanmadi. Google model mavjudligi va kvotalarini akkauntingiz uchun `check.ps1 -Online` bilan tekshiring. Bu tekshiruv model ro'yxatini tekshiradi; haqiqiy javob sifatini yoki billing ishlashini isbotlamaydi. Manbalar: [Gemini modellari](https://ai.google.dev/gemini-api/docs/models), [narxlar](https://ai.google.dev/gemini-api/docs/pricing), [OpenAI-compatible API](https://ai.google.dev/gemini-api/docs/openai).
+
+| Sozlama | Standart | Ta'siri |
+|---|---|---|
+| `GEMINI_REASONING_EFFORT` | `minimal` | Oddiy topshiriqlarda ichki fikrlashni kamaytiradi |
+| `TEXT_MAX_OUTPUT_TOKENS` | `1200` | Bir matn javobining maksimal generatsiya hajmi |
+| `HISTORY_MESSAGES` | `10` | Modelga yuboriladigan oxirgi matnlar soni |
+| `HISTORY_MAX_CHARS` | `10000` | Shu eski matnlarning umumiy belgilar chegarasi |
+| `VOICE_MAX_OUTPUT_TOKENS` | `768` | Bir jonli ovozli javob chegarasi |
+| `VOICE_CONTEXT_TOKENS` | `6000` | Jonli suhbat kontekstining chegarasi |
+
+Ushbu chegaralar umumiy pul limiti yoki barcha so'rovlar uchun yagona token budjeti emas: tizim ko'rsatmalari, tool sxemalari, joriy xabar va ko'p bosqichli tool javoblari ham input hisoblanadi. Past narx bilan yaxshi natijani muvozanatlash uchun javoblar odatda qisqa; batafsil javobni alohida so'rashingiz mumkin. Murakkab savollarda `GEMINI_REASONING_EFFORT=low` yoki `medium`, uzun javoblar uchun kattaroq `TEXT_MAX_OUTPUT_TOKENS` tanlash mumkin. Natija sifati va real token sarfi haqiqiy so'rovlaringiz bilan baholanadi; eng yaxshi sifat yoki eng kam token kafolatlanmaydi.
+
+Eski suhbat konteksti qisqarsa ham rejalar va eslatmalar SQLite bazasidan o'chirilmaydi. Gemini tool chaqiruvining thought signature ma'lumotlari shu so'rov davomida saqlanadi. Token chegarasida uzilgan Gemini tool javobi bajarilmaydi; foydalanuvchiga tekshirish kerakligi bildiriladi. Oddiy `/plans`, `/reminders`, `/calls`, `/status` buyruqlari modelga so'rov yubormaydi.
+
+Jonli ovozli suhbat hamda ovozli xabar transkripsiyasi/TTS **OpenAI orqali** qoladi; Gemini Flash-Lite bu loyihada jonli ovoz modeli emas. Faqat Gemini kaliti bilan yozishmalar va reja/eslatma matnlari ishlaydi, matnli eslatmalar keladi. Ovoz uchun OpenAI kaliti kerak; u bo'lmasa dastur odamga qo'ng'iroq qilishdan oldin sababini bildiradi. Google bepul va pulli rejalarining ma'lumotlardan foydalanish shartlari farqlanishi mumkin; tafsilotlar Google narxlar sahifasida.
 
 ## AI kalitlari va zaxira ulanish
 

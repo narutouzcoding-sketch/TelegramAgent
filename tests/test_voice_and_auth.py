@@ -182,7 +182,7 @@ async def test_voice_start_uses_current_api_schema_and_restores_history(brain, m
 
         async def ws_connect(self, url, **kwargs):
             assert url == "wss://api.openai.com/v1/realtime"
-            assert kwargs["params"]["model"] == "gpt-realtime-2.1"
+            assert kwargs["params"]["model"] == "gpt-realtime-2.1-mini"
             return Socket()
 
         async def close(self):
@@ -197,6 +197,8 @@ async def test_voice_start_uses_current_api_schema_and_restores_history(brain, m
     session = sent[0]["session"]
     assert session["audio"]["input"]["format"] == {"type": "audio/pcm", "rate": 24000}
     assert session["audio"]["input"]["turn_detection"]["interrupt_response"] is True
+    assert session["max_output_tokens"] == 768
+    assert session["truncation"]["token_limits"]["post_instructions"] == 6000
     assert sent[2]["item"]["content"][0]["type"] == "output_text"
     assert sent[-1]["type"] == "response.create"
     # JSON serialization also catches accidental binary or SDK objects in protocol messages.

@@ -67,7 +67,12 @@ class VoiceSession:
                         },
                         "tools": [{k: v for k, v in t.items() if k != "strict"} for t in TOOLS],
                         "tool_choice": "auto",
-                        "max_output_tokens": 1400,
+                        "max_output_tokens": cfg.voice_max_output_tokens,
+                        "truncation": {
+                            "type": "retention_ratio",
+                            "retention_ratio": 0.8,
+                            "token_limits": {"post_instructions": cfg.voice_context_tokens},
+                        },
                     },
                 }
             )
@@ -83,7 +88,7 @@ class VoiceSession:
                 else:
                     raise RuntimeError("Realtime session closed during configuration")
             # Restore recent text context; never resend historical audio.
-            for entry in self.brain.store.history(12):
+            for entry in self.brain.store.context(cfg.history_messages, cfg.history_max_chars):
                 await self.send(
                     {
                         "type": "conversation.item.create",

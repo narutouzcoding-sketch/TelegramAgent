@@ -11,7 +11,7 @@ from openai import APIError
 from telethon import functions
 from telethon.tl.types import User
 
-from .ai_access import public_ai_error
+from .ai_access import AIUnavailable, public_ai_error
 from .config import ROOT
 from .setup_inputs import international_phone
 
@@ -168,7 +168,7 @@ async def execute_job(app, job):
         # Only our explicit input/recipient errors are suitable for the owner; SDK bodies stay private.
         reason = (
             public_ai_error(exc)
-            if isinstance(exc, APIError)
+            if isinstance(exc, (APIError, AIUnavailable))
             else str(exc)
             if isinstance(exc, ValueError)
             else type(exc).__name__

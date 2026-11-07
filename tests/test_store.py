@@ -95,3 +95,14 @@ def test_invalid_reminders_are_not_saved(store):
         with pytest.raises(ValueError):
             store.add_reminder(title, due, repeat, mode)
     assert store.list_reminders() == []
+
+
+def test_context_budget_drops_old_messages_without_removing_saved_plans(store):
+    store.add_plan("Saqlangan reja", "Muhim")
+    store.remember("user", "old" * 100)
+    store.remember("assistant", "old" * 100)
+    store.remember("user", "Yangi savol")
+    store.remember("assistant", "Yangi javob")
+    context = store.context(limit=10, max_chars=40)
+    assert [row["content"] for row in context] == ["Yangi savol", "Yangi javob"]
+    assert store.list_plans()[0]["title"] == "Saqlangan reja"

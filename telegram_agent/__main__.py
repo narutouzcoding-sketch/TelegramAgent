@@ -10,7 +10,9 @@ from logging.handlers import RotatingFileHandler
 
 from dotenv import dotenv_values, set_key
 
+from .ai_access import AIUnavailable
 from .config import ROOT, Settings
+from .env_defaults import ensure_env_defaults
 from .owner_setup import configured_owner, pair_owner
 from .setup_inputs import prompt_phone, telegram_credentials
 
@@ -44,6 +46,7 @@ async def setup(from_env=False):
     path = ROOT / ".env"
     if not path.exists():
         shutil.copy(ROOT / ".env.example", path)
+    ensure_env_defaults(path, ROOT / ".env.example")
     existing = dotenv_values(path)
     print("TelegramAgent sozlash. Maxfiy qiymatlar chatga yuborilmaydi.")
     print("Asosiy akkauntingizdan yordamchi akkauntiga bir marta xabar yuboring.")
@@ -59,11 +62,11 @@ async def setup(from_env=False):
         key = getpass.getpass("OpenAI API key (yashirin; bo'sh = avvalgisi): ").strip()
         key = key or existing.get("OPENAI_API_KEY", "")
     api_id, api_hash = telegram_credentials(api_id, api_hash)
-    if not key and not from_env:
+    if not key and not from_env and not existing.get("GEMINI_API_KEY"):
         raise ValueError("OpenAI API key kerak.")
     if not key:
         print(
-            "OpenAI API key hali yo'q. Telegram login mumkin; agentni boshlashdan oldin .env ga kiriting."
+            "OpenAI API key hali yo'q. Telegram login mumkin. Gemini kaliti bilan matnli agent ishlaydi; jonli ovoz uchun OpenAI kaliti kerak."
         )
     saved_phone = existing.get("TELEGRAM_PHONE", "") if from_env else ""
     if saved_phone:
@@ -142,15 +145,27 @@ async def doctor(online=False):
         from openai import AsyncOpenAI
         from telethon import TelegramClient
 
-        async with AsyncOpenAI(api_key=settings.openai_key) as ai:
-            for model in [
-                settings.text_model,
-                settings.realtime_model,
-                settings.transcribe_model,
-                settings.tts_model,
-            ]:
-                await ai.models.retrieve(model)
-                print(f"Model mavjud: {model}")
+        if settings.resolved_text_provider == "gemini":
+            from .gemini_text import GeminiText
+
+            gemini = GeminiText(settings)
+            try:
+                models = await gemini.client.models.list()
+                if settings.gemini_model not in {model.id.split("/")[-1] for model in models.data}:
+                    raise ValueError("GEMINI_MODEL Google qaytargan modellar ro'yxatida topilmadi.")
+                print(f"Gemini model ro'yxatda mavjud: {settings.gemini_model}")
+            finally:
+                await gemini.close()
+        if settings.openai_key:
+            async with AsyncOpenAI(api_key=settings.openai_key) as ai:
+                models = [settings.realtime_model, settings.transcribe_model, settings.tts_model]
+                if settings.resolved_text_provider == "openai":
+                    models.insert(0, settings.text_model)
+                for model in models:
+                    await ai.models.retrieve(model)
+                    print(f"OpenAI model mavjud: {model}")
+        else:
+            print("OpenAI ovozli funksiyalari sozlanmagan; Gemini matnli rejimi tanlangan.")
         client = TelegramClient(
             str(ROOT / "data" / "assistant"), settings.api_id, settings.api_hash
         )
@@ -176,11 +191,24 @@ async def doctor(online=False):
 
 def main():
     parser = argparse.ArgumentParser(description="Shaxsiy Telegram AI yordamchi")
-    parser.add_argument("command", choices=["setup", "login", "doctor", "run"])
+    parser.add_argument("command", choices=["configure", "setup", "login", "doctor", "run"])
+    parser.add_argument(
+        "--economy",
+        action="store_true",
+        help="configure: oldingi standart Realtime modelini Mini ga almashtirish",
+    )
     parser.add_argument("--online", action="store_true", help="doctor: tashqi API larni tekshirish")
     args = parser.parse_args()
     try:
-        if args.command in {"setup", "login"}:
+        if args.command == "configure":
+            path = ROOT / ".env"
+            added = ensure_env_defaults(path, ROOT / ".env.example")
+            print("Qo'shilgan sozlama nomlari: " + (", ".join(added) or "yangi sozlama yo'q"))
+            if args.economy and dotenv_values(path).get("REALTIME_MODEL") == "gpt-realtime-2.1":
+                set_key(str(path), "REALTIME_MODEL", "gpt-realtime-2.1-mini")
+                print("REALTIME_MODEL: arzonroq gpt-realtime-2.1-mini tanlandi.")
+            print("Mavjud API kalitlari o'zgartirilmadi va chiqarilmadi.")
+        elif args.command in {"setup", "login"}:
             with process_lock():
                 asyncio.run(setup(from_env=args.command == "login"))
         elif args.command == "doctor":
@@ -204,7 +232,7 @@ def main():
         print("\nAgent to'xtatildi.")
     except Exception as exc:
         # Never print SDK exception bodies; they can contain credentials or request data.
-        if isinstance(exc, ValueError):
+        if isinstance(exc, (ValueError, AIUnavailable)):
             print("Xato:", exc, file=sys.stderr)
         else:
             print(

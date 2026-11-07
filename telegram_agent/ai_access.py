@@ -59,12 +59,18 @@ class AIUnavailable(RuntimeError):
 
 class AIClientPool:
     def __init__(self, settings):
-        keys = tuple(dict.fromkeys((settings.openai_key, *settings.backup_openai_keys)))
+        keys = tuple(
+            dict.fromkeys(key for key in (settings.openai_key, *settings.backup_openai_keys) if key)
+        )
         self.clients = [AsyncOpenAI(api_key=key, timeout=60, max_retries=0) for key in keys]
-        self.current = self.clients[0]
+        self.current = self.clients[0] if self.clients else None
         self.model = settings.realtime_model
 
     def candidates(self):
+        if self.current is None:
+            raise AIUnavailable(
+                "Bu ovozli funksiya uchun OPENAI_API_KEY kerak. Gemini matnli suhbat va rejalar uchun ulangan."
+            )
         return [self.current] + [client for client in self.clients if client is not self.current]
 
     async def request(self, operation):

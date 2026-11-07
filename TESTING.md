@@ -9,7 +9,7 @@
 - NTgCalls native DLL importi: muvaffaqiyatli.
 - 48 kHz mono PCM jonli jo'natish va qabul qilish konfiguratsiyalari: yaratildi.
 - `ruff check telegram_agent tests`: muvaffaqiyatli.
-- `python -m pytest -q -W error::RuntimeWarning`: **67 passed**, ogohlantirishsiz.
+- `python -m pytest -q -W error::RuntimeWarning`: **76 passed**, ogohlantirishsiz.
 - `uv lock --check`: muvaffaqiyatli.
 - Barcha PowerShell skriptlarining sintaksisi: tekshirildi.
 
@@ -27,6 +27,11 @@ dan keyin loginni takrorlamasdan davom ettirish, username ning eski ID dan ustun
 AI zaxira kaliti tarmoq/5xx xatosida ishlashi, 429/kvota/billing/401/403 holatlarida kalit
 aylanmasligi, Retry-After talabini aylanib o'tmaslik, audio faylni qayta urinishda boshidan
 o'qish va Realtime kvota xatosining tushunarli izohi tekshirildi.
+Gemini tool round-trip, Google thought signature larining saqlanishi, minimal reasoning va
+generatsiya chegarasi, Gemini kvotasida profil almashtirmaslik, token chegarasida uzilgan tool
+amalini bajarmaslik, OpenAI kalitisiz ovozli qo'ng'iroqni terishdan oldin rad etish tekshirildi.
+Yangi `.env` maydonlarini qo'shishda oldingi maxfiy qiymatlar saqlanishi, Gemini-only matn
+konfiguratsiyasi va suhbat kontekstini qisqartirish saqlangan rejalarni o'chirmasligi tekshirildi.
 Tashqi xizmatlar mock bilan almashtirilgan; pulli API so'rovi yuborilmadi.
 
 ## Sizning akkauntingiz bilan qolgan tekshiruvlar
@@ -40,5 +45,6 @@ hisobotga ko'chirilmaydi. Quyidagilar mahalliy test bilan isbotlanmagan:
 4. Haqiqiy eslatmaning belgilangan vaqtda telefoningizga yetib borishi.
 5. Windows login paytida avtomatik boshlash (skript tayyor, vazifa hali o'rnatilmagan).
 6. Boshqa haqiqiy Telegram foydalanuvchisiga xabarni qo'ng'iroq bilan yetkazish.
+7. Haqiqiy Gemini API kaliti bilan generatsiya sifati, function calling va akkaunt kvotalari.
 
 `README.md` dagi sozlash va ikki daqiqalik haqiqiy sinovni bajaring.
