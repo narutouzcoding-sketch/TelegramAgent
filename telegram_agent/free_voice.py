@@ -67,12 +67,18 @@ class FreeVoiceSession:
             self.input.put_nowait(pcm)
 
     async def greet(self):
-        await self.respond("Qo'ng'iroq boshidagi ko'rsatma: " + self.introduction)
+        # A greeting is speech to deliver, not a new owner instruction to the text agent.
+        await self.speak(self.introduction)
 
     async def respond(self, text):
+        reply = await self.brain.answer(text)
+        await self.speak(reply)
+        if getattr(self.brain, "finished", False):
+            self.closed.set()
+
+    async def speak(self, reply):
         self.busy = True
         try:
-            reply = await self.brain.answer(text)
             with tempfile.TemporaryDirectory(dir=ROOT / "data", prefix="free-call-") as folder:
                 path = Path(folder) / "reply.ogg"
                 await self.brain.speech(reply, path)

@@ -78,9 +78,10 @@ async def test_free_call_captures_next_turn_after_reply_and_closes_tasks(monkeyp
         for frame in [LOUD] * 30 + [SILENCE] * 90:
             voice.accept_pcm48(frame)
         async with asyncio.timeout(2):
-            while brain.answer.await_count < 2 or voice.busy:
+            while brain.answer.await_count < 1 or voice.busy:
                 await asyncio.sleep(0.01)
         brain.free_speech.transcribe_pcm48.assert_awaited_once()
+        assert brain.speech.await_args_list[0].args[0] == "Salom"
         assert brain.answer.call_args.args == ("Rejalarim qanday?",)
         assert any(call.args == (LOUD,) for call in sender.call_args_list)
     finally:

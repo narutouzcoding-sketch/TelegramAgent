@@ -33,11 +33,11 @@ class FreeSpeech:
         async with self.lock:
             await asyncio.to_thread(self._load)
 
-    def _recognize(self, audio):
+    def _recognize(self, audio, language="uz"):
         self._load()
         segments, _ = self.model.transcribe(
             audio,
-            language="uz",
+            language=language,
             beam_size=5,
             vad_filter=True,
             condition_on_previous_text=False,
@@ -56,18 +56,18 @@ class FreeSpeech:
         async with self.lock:
             return await asyncio.to_thread(recognize_file)
 
-    async def transcribe_pcm48(self, pcm):
+    async def transcribe_pcm48(self, pcm, language=None):
         def recognize_pcm():
             import numpy as np
 
             converted, _ = audioop.ratecv(pcm, 2, 1, 48000, 16000, None)
             audio = np.frombuffer(converted, dtype="<i2").astype(np.float32) / 32768.0
-            return self._recognize(audio)
+            return self._recognize(audio) if language is None else self._recognize(audio, language)
 
         async with self.lock:
             return await asyncio.to_thread(recognize_pcm)
 
-    async def speech(self, text, path):
+    async def speech(self, text, path, language=None):
         import edge_tts
 
         (ROOT / "data").mkdir(exist_ok=True)
@@ -75,9 +75,10 @@ class FreeSpeech:
             with tempfile.TemporaryDirectory(dir=ROOT / "data", prefix="tts-") as folder:
                 source = Path(folder) / "speech.mp3"
                 async with asyncio.timeout(45):
-                    await edge_tts.Communicate(text[:1800], self.settings.free_tts_voice).save(
-                        str(source)
+                    voice = {"en": "en-US-JennyNeural", "ru": "ru-RU-SvetlanaNeural"}.get(
+                        language, self.settings.free_tts_voice
                     )
+                    await edge_tts.Communicate(text[:1800], voice).save(str(source))
                 process = await asyncio.create_subprocess_exec(
                     "ffmpeg",
                     "-v",

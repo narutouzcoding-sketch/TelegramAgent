@@ -6,3 +6,5 @@
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
 
 .account-actions{padding:24px;display:grid;gap:12px}.top-avatar{cursor:pointer}@media(max-width:620px){.top-avatar{display:flex;width:26px;height:26px;font-size:9px}}
+
+.contact-import-actions{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px}.contact-import-actions label{display:inline-flex;margin:0;cursor:pointer}.contact-tools{margin-bottom:24px}.call-summary{padding:12px;background:#f0ecff;border-radius:10px}.call-transcript{max-height:300px;overflow:auto;white-space:pre-wrap}.call-content details{font-size:12px;margin-top:10px}.call-content summary{cursor:pointer;color:#6c55e8}

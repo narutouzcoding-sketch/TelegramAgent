@@ -165,6 +165,11 @@ async def test_explicit_call_command_is_restricted_to_owner(brain):
     )
     app.store = brain.store
     app.send_text = AsyncMock()
+    app.queue_requested_call = AsyncMock(
+        side_effect=lambda target, message, **options: brain.store.queue_contact_call(
+            target, message, **options
+        )
+    )
     event = SimpleNamespace(
         is_private=True, sender_id=99, out=False, raw_text="/callto @friend | Soat 18 da kel."
     )

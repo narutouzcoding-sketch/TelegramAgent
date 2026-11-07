@@ -28,7 +28,10 @@ HELP = """Men shaxsiy AI yordamchingizman. O'zbekcha yozing, ovozli xabar yubori
 /plans — ochiq rejalar
 /reminders — eslatmalar
 /contacts — ulashilgan kontaktlar
-/callto @username | aytiladigan gap — kontaktga qo'ng'iroq
+/callto en @username | xabar — tanlangan tilda aytish
+/askto en @username | savol — javob olib kelish
+/talkto en @username | vazifa — qisqa suhbat
+/contacts ism — kontaktlardan qidirish
 /calls — topshirilgan qo'ng'iroqlar holati
 /cancelcall ID — navbatdagi qo'ng'iroqni bekor qilish
 /status — holat
@@ -76,6 +79,7 @@ class AgentApp:
         self.recipient_resolver = None
         self.relay_target = None
         self.relay_ended = None
+        self.relay_voice = None
 
     async def send_text(self, text):
         # Plain text prevents model-generated Markdown links from changing message meaning.
@@ -113,6 +117,12 @@ class AgentApp:
             )
         self.owner = await self.telegram.get_input_entity(owner_user)
         self.owner_name = unicodedata.normalize("NFKC", owner_user.first_name or "foydalanuvchi")
+        from .contact_sync import telegram_contacts
+
+        self.store.import_contacts(
+            await self.policy.action(lambda: telegram_contacts(self.telegram, me.id)),
+            "helper-telegram",
+        )
         from .contact_calls import run_queue
 
         self.telegram.add_event_handler(self.on_message, events.NewMessage(incoming=True))
@@ -176,6 +186,7 @@ class AgentApp:
         from .contact_calls import RecipientResolver
 
         self.recipient_resolver = RecipientResolver(self.telegram, self.store, own_id)
+        self.brain.contact_request = self.queue_requested_call
         self.calls = PyTgCalls(self.telegram)
 
         @self.calls.on_update(filters.chat_update(ChatUpdate.Status.INCOMING_CALL))
@@ -192,14 +203,42 @@ class AgentApp:
                 self.voice.closed.set()
             if update.chat_id == self.relay_target and self.relay_ended:
                 self.relay_ended.set()
+                if self.relay_voice:
+                    self.relay_voice.closed.set()
 
         @self.calls.on_update(filters.stream_frame(Direction.INCOMING, Device.MICROPHONE))
         async def audio(_, update):
             if update.chat_id == self.settings.owner_id and self.voice:
                 for frame in update.frames:
                     self.voice.accept_pcm48(frame.frame)
+            elif update.chat_id == self.relay_target and self.relay_voice:
+                for frame in update.frames:
+                    self.relay_voice.accept_pcm48(frame.frame)
 
         await self.calls.start()
+
+    async def queue_requested_call(self, target, message, **options):
+        from dataclasses import replace
+
+        user = await self.policy.action(lambda: self.recipient_resolver.resolve(target))
+        if user.id == self.settings.owner_id:
+            raise ValueError("O'zingizga qo'ng'iroq qilish uchun /call ishlating.")
+        reference = "@" + user.username if user.username else target
+        name = " ".join(filter(None, (user.first_name, user.last_name))) or reference
+        self.store.save_contact(name, reference)
+        row = next(c for c in self.store.list_contacts() if c["reference"] == reference)
+        self.store.set_contact_permission(row["id"], user.id, True)
+        self.settings = replace(
+            self.settings,
+            enable_contact_calls=True,
+            allowed_call_user_ids=tuple(
+                dict.fromkeys((*self.settings.allowed_call_user_ids, user.id))
+            ),
+        )
+        self.policy.settings = self.brain.settings = self.settings
+        return self.store.queue_contact_call(
+            reference, message, recipient_user_id=user.id, **options
+        )
 
     def spawn(self, coroutine):
         task = asyncio.create_task(coroutine)
@@ -335,8 +374,7 @@ class AgentApp:
         ):
             try:
                 return await self.place_call(
-                    "O'zingizni AI yordamchi deb tanishtiring va mana bu eslatmani "
-                    "foydalanuvchiga ayting. Keyin savollariga javob bering: " + text
+                    "Salom! Men AI yordamchingizman. " + text + ". Savolingiz bo'lsa, ayting."
                 )
             except asyncio.CancelledError:
                 raise
@@ -409,10 +447,12 @@ class AgentApp:
             )
             return
         if command == "/contacts":
+            query = text[len(command) :].strip()
+            contacts = (
+                self.store.search_contacts(query) if query else self.store.list_contacts()[:50]
+            )
             await self.send_text(
-                "\n".join(
-                    f"{row['name']} — {row['reference']}" for row in self.store.list_contacts()
-                )
+                "\n".join(f"{row['name']} — {row['reference']}" for row in contacts)
                 or "Kontaktlar yo'q. Telegram orqali kontaktni menga ulashing yoki @username bering."
             )
             return
@@ -425,15 +465,11 @@ class AgentApp:
                 or "Qo'ng'iroq topshiriqlari yo'q."
             )
             return
-        if command in {"/callto", "/cancelcall"}:
+        if command in {"/callto", "/askto", "/talkto", "/cancelcall"}:
             try:
                 arguments = text[len(command) :].strip()
-                if command == "/callto":
-                    if (
-                        not self.settings.enable_voice_calls
-                        or not self.settings.enable_contact_calls
-                        or not self.settings.allowed_call_user_ids
-                    ):
+                if command in {"/callto", "/askto", "/talkto"}:
+                    if not self.settings.enable_voice_calls:
                         raise ValueError(
                             "Kontaktlarga qo'ng'iroq hozir o'chirilgan. Avval faqat egasi bilan sinov qilinadi."
                         )
@@ -442,7 +478,19 @@ class AgentApp:
                         raise ValueError(
                             "Misol: /callto @username | Bugun soat 18:00 da uchrashamiz."
                         )
-                    result = self.store.queue_contact_call(target, message)
+                    if not target.strip() or not message.strip():
+                        raise ValueError("Kontakt va savol/xabarni kiriting.")
+                    language = "uz"
+                    if target.split(maxsplit=1)[0].strip() in {"uz", "en", "ru"}:
+                        language, target = target.strip().split(maxsplit=1)
+                    result = await self.queue_requested_call(
+                        target.strip(),
+                        message.strip(),
+                        mode={"/callto": "relay", "/askto": "ask", "/talkto": "conversation"}[
+                            command
+                        ],
+                        language=language,
+                    )
                     await self.send_text(
                         f"Qo'ng'iroq #{result['id']} navbatga qo'yildi: "
                         f"{result['target']}\nAytiladi: {result['message']}\n"

@@ -37,8 +37,7 @@ class GeminiText:
             return await self.client.chat.completions.create(
                 model=self.settings.gemini_model,
                 messages=[{"role": "system", "content": instructions}, *messages],
-                tools=declarations,
-                tool_choice="auto",
+                **({"tools": declarations, "tool_choice": "auto"} if declarations else {}),
                 max_tokens=self.settings.text_max_output_tokens,
                 reasoning_effort=self.settings.gemini_reasoning_effort,
             )

@@ -1,3 +1,4 @@
+import hashlib
 import json
 import sqlite3
 from datetime import UTC, datetime, timedelta
@@ -58,13 +59,28 @@ class Store:
         """)
         # Additive migrations keep existing reminders, contacts and call history intact.
         for table, additions in {
-            "contacts": {"telegram_id": "INTEGER", "call_allowed": "INTEGER NOT NULL DEFAULT 0"},
-            "outbound_calls": {"due": "TEXT", "recipient_user_id": "INTEGER"},
+            "contacts": {
+                "telegram_id": "INTEGER",
+                "call_allowed": "INTEGER NOT NULL DEFAULT 0",
+                "source": "TEXT NOT NULL DEFAULT 'manual'",
+            },
+            "outbound_calls": {
+                "due": "TEXT",
+                "recipient_user_id": "INTEGER",
+                "mode": "TEXT NOT NULL DEFAULT 'relay'",
+                "language": "TEXT NOT NULL DEFAULT 'uz'",
+                "max_turns": "INTEGER NOT NULL DEFAULT 4",
+                "duration_seconds": "INTEGER NOT NULL DEFAULT 180",
+                "transcript": "TEXT NOT NULL DEFAULT '[]'",
+                "summary": "TEXT NOT NULL DEFAULT ''",
+            },
         }.items():
             columns = {row[1] for row in self.db.execute(f"PRAGMA table_info({table})")}
             for name, declaration in additions.items():
                 if name not in columns:
                     self.db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {declaration}")
+        self.db.commit()
+        self.db.execute("CREATE TABLE IF NOT EXISTS contact_exclusions (digest TEXT PRIMARY KEY)")
         self.db.commit()
 
     def add_reminder(self, title, due_at, repeat="none", mode="call"):
@@ -302,9 +318,48 @@ class Store:
         return {"saved": True, "name": name}
 
     def list_contacts(self):
+        return [dict(row) for row in self.db.execute("SELECT * FROM contacts ORDER BY name")]
+
+    def search_contacts(self, query):
+        if not isinstance(query, str) or not query.strip():
+            raise ValueError("Qidirish uchun ism yoki username kiriting.")
+        query = query.casefold().strip()
         return [
-            dict(row) for row in self.db.execute("SELECT * FROM contacts ORDER BY name LIMIT 200")
-        ]
+            row
+            for row in self.list_contacts()
+            if query in (row["name"] + " " + row["reference"]).casefold()
+        ][:30]
+
+    def import_contacts(self, contacts, source="telegram"):
+        added = skipped = 0
+        with self.db:
+            for row in contacts:
+                reference = str(row.get("reference", "")).strip()
+                user_id = row.get("telegram_id")
+                identifiers = (reference.casefold(), str(user_id or ""))
+                if not reference or any(
+                    self.db.execute(
+                        "SELECT 1 FROM contact_exclusions WHERE digest=?",
+                        (hashlib.sha256(v.encode()).hexdigest(),),
+                    ).fetchone()
+                    for v in identifiers
+                    if v
+                ):
+                    skipped += 1
+                    continue
+                existing = self.db.execute(
+                    "SELECT id FROM contacts WHERE reference=? OR (telegram_id IS NOT NULL AND telegram_id=?)",
+                    (reference, user_id),
+                ).fetchone()
+                if existing:
+                    skipped += 1
+                    continue
+                self.db.execute(
+                    "INSERT INTO contacts(name,reference,telegram_id,source) VALUES(?,?,?,?)",
+                    (self._title(row.get("name") or reference), reference, user_id, source),
+                )
+                added += 1
+        return {"imported": added, "skipped": skipped, "total": len(self.list_contacts())}
 
     def set_contact_permission(self, contact_id, telegram_id, allowed):
         if telegram_id is not None and (not isinstance(telegram_id, int) or telegram_id <= 0):
@@ -330,10 +385,39 @@ class Store:
 
     def delete_contact(self, contact_id):
         with self.db:
+            row = self.db.execute(
+                "SELECT reference,telegram_id FROM contacts WHERE id=?", (contact_id,)
+            ).fetchone()
+            if row:
+                for value in row:
+                    if value:
+                        self.db.execute(
+                            "INSERT OR IGNORE INTO contact_exclusions VALUES(?)",
+                            (hashlib.sha256(str(value).casefold().encode()).hexdigest(),),
+                        )
             count = self.db.execute("DELETE FROM contacts WHERE id=?", (contact_id,)).rowcount
         return {"deleted": bool(count)}
 
-    def queue_contact_call(self, target, message, due_at=None, recipient_user_id=None):
+    def queue_contact_call(
+        self,
+        target,
+        message,
+        due_at=None,
+        recipient_user_id=None,
+        mode="relay",
+        language="uz",
+        max_turns=4,
+        duration_seconds=180,
+    ):
+        if mode not in {"relay", "ask", "conversation"} or language not in {"uz", "en", "ru"}:
+            raise ValueError("Qo'ng'iroq turi yoki tili noto'g'ri.")
+        if (
+            not isinstance(max_turns, int)
+            or not 1 <= max_turns <= 10
+            or not isinstance(duration_seconds, int)
+            or not 30 <= duration_seconds <= 600
+        ):
+            raise ValueError("Suhbat 1..10 javob va 30..600 soniya orasida bo'lsin.")
         if not isinstance(target, str) or not target.strip() or len(target) > 200:
             raise ValueError("Aniq kontakt ismi, @username yoki +mamlakat_kodi bilan raqam kerak.")
         if not isinstance(message, str) or not message.strip() or len(message) > 1500:
@@ -341,8 +425,8 @@ class Store:
         due = parse_due(due_at, self.timezone).isoformat() if due_at else None
         existing = self.db.execute(
             "SELECT id,state FROM outbound_calls WHERE target=? AND message=? "
-            "AND state IN ('queued','running') AND due IS ? ORDER BY id LIMIT 1",
-            (target.strip(), message.strip(), due),
+            "AND state IN ('queued','running') AND due IS ? AND mode=? AND language=? ORDER BY id LIMIT 1",
+            (target.strip(), message.strip(), due, mode, language),
         ).fetchone()
         if existing:
             return {
@@ -363,8 +447,18 @@ class Store:
             raise ValueError("Navbatda 10 ta topshiriq bor. Avval ularning yakunlanishini kuting.")
         with self.db:
             cursor = self.db.execute(
-                "INSERT INTO outbound_calls(target,message,created,due,recipient_user_id) VALUES(?,?,?,?,?)",
-                (target.strip(), message.strip(), utc_now().isoformat(), due, recipient_user_id),
+                "INSERT INTO outbound_calls(target,message,created,due,recipient_user_id,mode,language,max_turns,duration_seconds) VALUES(?,?,?,?,?,?,?,?,?)",
+                (
+                    target.strip(),
+                    message.strip(),
+                    utc_now().isoformat(),
+                    due,
+                    recipient_user_id,
+                    mode,
+                    language,
+                    max_turns,
+                    duration_seconds,
+                ),
             )
         return {
             "queued": True,
@@ -374,6 +468,8 @@ class Store:
             "status": "queued",
             "due_at": due,
             "channel": "telegram",
+            "mode": mode,
+            "language": language,
             "note": "Siz bilan faol qo'ng'iroq tugagach bajariladi. Hali yetkazilmadi.",
         }
 
@@ -416,12 +512,19 @@ class Store:
         return dict(row) if row else None
 
     def finish_contact_call(self, job_id, state, result):
-        if state not in {"sent", "failed", "cancelled", "interrupted"}:
+        if state not in {"sent", "failed", "cancelled", "interrupted", "completed", "no_answer"}:
             raise ValueError("Noto'g'ri qo'ng'iroq holati")
         with self.db:
             self.db.execute(
                 "UPDATE outbound_calls SET state=?,result=? WHERE id=?",
                 (state, result[:200], job_id),
+            )
+
+    def save_contact_report(self, job_id, transcript, summary):
+        with self.db:
+            self.db.execute(
+                "UPDATE outbound_calls SET transcript=?,summary=? WHERE id=?",
+                (json.dumps(transcript[:22], ensure_ascii=False), summary[:6000], job_id),
             )
 
     def recover_contact_calls(self):

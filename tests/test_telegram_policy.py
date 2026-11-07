@@ -108,6 +108,9 @@ def test_call_limits_survive_store_reopen(tmp_path):
 
 async def test_text_mode_starts_without_call_transport(brain, monkeypatch):
     from telegram_agent import app as module
+    from telegram_agent import contact_sync
+
+    monkeypatch.setattr(contact_sync, "telegram_contacts", AsyncMock(return_value=[]))
 
     app = AgentApp.__new__(AgentApp)
     app.settings, app.store = brain.settings, brain.store

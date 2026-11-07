@@ -4,7 +4,7 @@
 
 ## Web boshqaruv paneli
 
-115 ta test o'tdi. Panel testlari autentifikatsiya, CSRF, boshqa origin'dan yozishni rad etish, login urinishlarini cheklash, logout, maxfiy fayllarni bermaslik, reja/eslatma tahrirlash, kontaktni tekshirish va jonli ruxsat ro'yxatini yangilash, ruxsatni Telegramsiz bekor qilish, takroriy qo'ng'iroqni bostirish, keyingi vaqtga saqlash, kechikkan topshiriqni bekor qilish va eski bazaga ma'lumot yo'qotmasdan yangi ustunlar qo'shishni qamraydi. Username boshqa ID ga o'tsa ovoz yaratilishidan oldin rad etilishi tekshirildi.
+128 ta test o'tdi. Panel testlari autentifikatsiya, CSRF, boshqa origin'dan yozishni rad etish, login urinishlarini cheklash, logout, maxfiy fayllarni bermaslik, reja/eslatma tahrirlash, kontaktni tekshirish va jonli ruxsat ro'yxatini yangilash, ruxsatni Telegramsiz bekor qilish, takroriy qo'ng'iroqni bostirish, keyingi vaqtga saqlash, kechikkan topshiriqni bekor qilish va eski bazaga ma'lumot yo'qotmasdan yangi ustunlar qo'shishni qamraydi. Username boshqa ID ga o'tsa ovoz yaratilishidan oldin rad etilishi tekshirildi.
 
 `ruff check .`, JavaScript fayllarida `node --check`, PowerShell parser tekshiruvi, `uv lock --check` va `git diff --check` o'tdi. Haqiqiy Gemini bilan o'zgartirilgan tool sxemasi bitta qisqa suhbatda qabul qilindi; haqiqiy reja yoki qo'ng'iroq topshirig'i yaratilmagan.
 
@@ -23,7 +23,7 @@ Panel avtomatik start tuzatishidan keyin haqiqiy brauzerda `Agent ishlayapti` ho
 - NTgCalls native DLL importi: muvaffaqiyatli.
 - 48 kHz mono PCM jonli jo'natish va qabul qilish konfiguratsiyalari: yaratildi.
 - `ruff check telegram_agent tests`: muvaffaqiyatli.
-- `python -m pytest -q`: **115 passed**. Panelning 14 ta testi `-W error` bilan ham o'tdi.
+- `python -m pytest -q`: **128 passed**. Panelning 14 ta testi `-W error` bilan ham o'tdi.
 - `uv lock --check`: muvaffaqiyatli.
 - Barcha PowerShell skriptlarining sintaksisi: tekshirildi.
 
@@ -88,3 +88,11 @@ Haqiqiy mahalliy sinovda Edge o'zbekcha Madina ovozi yaratildi, Whisper ovozni m
 Sinovdan keyin `.env` da `VOICE_PROVIDER=free`, `TEXT_PROVIDER=gemini`, `ENABLE_VOICE_CALLS=true`, `ENABLE_CONTACT_CALLS=false` saqlandi. Kalitlar va owner ID o'zgartirilmadi. Joriy agent sozlamalarni restartdan keyin oladi.
 
 Yangi testlar: sukut/qisqa shovqinni tashlash, gap bo'lagining davomiyligi, bepul ovozda OpenAI ga murojaat qilmaslik, haqiqiy WAV decoder mosligi, navbatdagi ovozli javobni PCM bilan jo'natish, echo/ustma-ust ovozni tashlash va xatoda tasklarni tozalash. Jonli Telegram qo'ng'irog'i hali foydalanuvchi bilan sinovdan o'tishi kerak.
+
+## Kontakt bilan savol-javob va ko'p tilli ovoz
+
+128 ta test o'tdi (`-W error::RuntimeWarning`). Yangi testlar: inglizcha savol, bitta javobdan keyin tugash, qisqa suhbat chegarasi, qabul qiluvchi matnidan egasi amallarini chaqirmaslik, faqat tanlangan peer'dan ovoz olish, transportni yopish, haqiqiy javobni sayt xotirasi va egasi xabariga qaytarish, to'g'ridan-to'g'ri username topshirig'ining idempotensiyasi, katta suhbat JSON saqlanishi, kontakt import/deduplikatsiya/o'chirilganni qayta olmaslik, 200 tadan ortiq kontaktni saqlash, faqat kontakt API sini o'qish va parol fayli o'zgarganda eski sessiyalarni bekor qilish.
+
+Haqiqiy mahalliy integratsiya: Gemini nonushta savolini inglizchaga o'tkazdi va AI ekanini aytadigan kirish matnini yaratdi; Edge inglizcha ovoz yaratdi; shu ovoz Whisper orqali “Please bring bread and eggs for breakfast.” deb to'g'ri tanildi; Gemini egasiga o'zbekcha xulosa tayyorladi. Izolyatsiyalangan bazada barcha owner tool deklaratsiyalari bilan haqiqiy qisqa javob olindi. Pulli OpenAI API ishlatilmadi.
+
+Haqiqiy panel avtomatik Telegramga ulandi. Yordamchi akkauntining 198 ta kontakti mahalliy bazaga olindi; avval o'chirilgan akkaunt qayta qo'shilmadi. Keyin foydalanuvchi alohida mahalliy oynada boshqa akkauntga muvaffaqiyatli kirdi. Dastlab ID mos kelmasligi importni to'xtatgan edi; kontakt manbasi va boshqaruvchi roli ajratilib tuzatildi. Shu sessiyadan 27 yangi kontakt olindi, jami 225 ta bo'ldi. Boshqaruvchi ID o'zgartirilmadi. Qo'shimcha testlar kontakt manbasi boshqaruv huquqi olmasligini, sessiya yo'qligida login boshlanmasligini va ovoz uzilganda ham tanilgan qisman javob egasiga qaytarilishini tekshiradi. Dasturchi sinovida boshqa odamga qo'ng'iroq qilinmadi. Shaxsiy jonli qo'ng'iroqdagi ikki tomonlama ovoz, Telegram maxfiylik ruxsatlari va haqiqiy kechikish avtomatlashtirilgan mock orqali to'liq isbotlanmaydi.

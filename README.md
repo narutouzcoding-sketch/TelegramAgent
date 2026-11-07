@@ -4,9 +4,40 @@ Telegram ichida yozishadigan, ovozli xabarga javob beradigan, shaxsiy qo'ng'iroq
 
 ## Hozirgi holat
 
-Windows uchun mahalliy web boshqaruv paneli, Telegram agenti, Python 3.12 muhiti va `uv.lock` tayyor. Panel orqali haqiqiy Telegram agentini ishga tushirish/to'xtatish tekshirildi; 115 avtomatlashtirilgan test o'tdi. Gemini va bepul ovoz rejimi ishlatilishi mumkin. OpenAI ovoz sinovi billing/kvota xatosi bilan tugagan. Yangi o'rnatishda qo'ng'iroqlar standart holatda o'chirilgan. Serverga joylash va HTTPS hali bajarilmagan.
+Windows uchun mahalliy web boshqaruv paneli, Telegram agenti, Python 3.12 muhiti va `uv.lock` tayyor. Panel orqali haqiqiy Telegram agentini ishga tushirish/to'xtatish tekshirildi; 128 avtomatlashtirilgan test o'tdi. Gemini va bepul ovoz rejimi ishlatilishi mumkin. OpenAI ovoz sinovi billing/kvota xatosi bilan tugagan. Yangi o'rnatishda qo'ng'iroqlar standart holatda o'chirilgan. Serverga joylash va HTTPS hali bajarilmagan.
 
 ## Boshqaruv paneli
+
+### Savol berish va javobni olib kelish
+
+**Qo'ng'iroqlar** bo'limida kontakt ismi, `@username`, `t.me` profil havolasi yoki xalqaro raqam yoziladi. Aniq topshiriq yuborilganda Telegram akkaunti tekshiriladi va bitta qo'ng'iroq navbatga qo'yiladi. Kontaktlar ichida bir xil ism bo'lsa, aniq username yoki raqam kerak.
+
+- **Faqat xabar aytsin:** tanlangan tilda xabarni aytadi.
+- **Savol berib, javob olsin:** savolni so'raydi, bitta javobni tinglaydi, rahmat aytib yakunlaydi.
+- **Vazifa bo'yicha suhbatlashsin:** savolni aniqlashtirish uchun qisqa muloqot qiladi; javoblar va vaqt chegarasi panelda tanlanadi.
+
+O'zbekcha, inglizcha va ruscha til tanlanadi. Masalan, vazifa: **“Nonushtaga nima olib boray, deb so'ra”**, til: **English**, rejim: **Savol berib, javob olsin**. Savol mazmuni inglizchaga o'tkazilib, inglizcha ovozda aytiladi; javob tanilganidan so'ng o'zbekcha xulosa egasining Telegram chatiga yuboriladi va sayt suhbatida ko'rinadi. Qo'ng'iroqlar tarixida asl suhbat matni ham ochiladi. Ovoz tanish xato qilishi mumkin; asl matnni tekshirish mumkin.
+
+Agent o'zini AI yordamchi deb tanishtiradi va javob egasiga yetkazilishini aytadi. Kontakt suhbati egasining xotirasi va amallaridan ajratilgan: qabul qiluvchi reja, kontakt, to'lov yoki boshqa qo'ng'iroq amallarini bajartira olmaydi. Ovoz fayli doimiy saqlanmaydi, suhbat matni va xulosa mahalliy bazada saqlanadi. Matn tanlangan AI xizmatiga yuboriladi. Bu navbat bilan gaplashadigan bepul ovoz rejimi; ayni paytda ustma-ust gaplarni tashlab yuboradi.
+
+Telegramdan ham oddiy tilda so'rash mumkin yoki aniq buyruqlar ishlatiladi:
+
+```text
+/askto en @username | Nonushtaga nima olib boray?
+/talkto en @username | Ertangi uchrashuv vaqtini aniqlashtir.
+/callto ru @username | Bugun 10 daqiqa kechikaman.
+/contacts Ali
+```
+
+Bu misollardagi username o'rniga haqiqiy kontakt yoziladi. Javob bo'lmasa qayta terilmaydi. Boshqa odamga jonli suhbat qilish dasturchi sinovi doirasida avtomatik boshlanmaydi; egasining aniq topshirig'i kerak.
+
+### Kontaktlar va parol
+
+Paneldagi kontaktlar qidiriladi va takrorlari qayta qo'shilmaydi. Agent ishga tushganda yordamchi akkauntidagi Telegram kontaktlari olinadi; **Kontaktlarni yangilash** tugmasi yordamchi va mahalliy ulashdan o‘tgan akkaunt kontaktlarini qayta sinxronlaydi. Telegram API faqat ayni sessiya egasining kontaktlarini beradi: [contacts.getContacts](https://core.telegram.org/method/contacts.getContacts).
+
+Asosiy shaxsiy akkaunt kontaktlarini olish uchun **`sync-owner-contacts.ps1`** ni kompyuterda ishga tushiring. Raqam, Telegram kodi va 2FA paroli faqat mahalliy oynaga kiritiladi. Kirilgan akkaunt faqat kontakt manbasi sifatida ishlatiladi. Uning ID si boshqaruvchi ID dan farq qilsa ham, egasining boshqaruv huquqi unga berilmaydi. Skript chat tarixini so'ramaydi va xabar yubormaydi. Keyingi safar shu skript mavjud `data/owner-contacts.session` bilan kontaktlarni yana olishi mumkin. Bu sessiya maxfiy bo'lib, Git'ga kiritilmaydi. Yoki Telegram Desktop'dan kontaktlar JSON eksportini panelda import qiling. Oddiy import o'zidan qo'ng'iroq boshlamaydi. O'chirilgan kontakt keyingi importda avtomatik qaytmaydi.
+
+Parolni o'zingiz **`data/panel-password.txt`** faylida yangilab saqlang: 12..256 belgi. Panelni qayta ishga tushirish kerak emas. O'zgarishdan keyin eski kirishlar bekor bo'ladi va yangi parol bilan qayta kiriladi. UTF-8 va UTF-16 fayllar qabul qilinadi.
 
 Sozlangan kompyuterda **`open-panel.cmd` faylini ikki marta bosing**. Brauzerda [shaxsiy panel](http://127.0.0.1:8765/) ochiladi; birinchi parol `data/panel-password.txt` faylida. Panel fonda ishlaydi, ochilgan terminalni yopish mumkin. Panel ochilganda Telegram agenti ham avtomatik ulanadi. Bosh sahifada uning ulanish holati ko'rinadi; agentni shu yerdan to'xtatish va yana ishga tushirish mumkin. Oldingi `start.ps1` jarayoni ishlayotgan bo'lsa, uni avval `Ctrl+C` bilan to'xtating; bitta Telegram sessiyasi bir vaqtda bitta jarayonda ochiladi.
 
@@ -65,7 +96,7 @@ Matnli javob bo'laklari orasida kamida 2 soniya kutish bor. Qo'ng'iroq keyinchal
 
 `FLOOD_WAIT` kelsa kutish muddati saqlanadi va agent to'xtaydi; uni erta qayta ochish yuborishni davom ettirmaydi. `PEER_FLOOD`, freeze yoki akkaunt bloklanishi xatolari ham faol ishni to'xtatadi. Avtomatik qayta terish va RPC ni cheklovdan keyin qayta yuborish o'chirilgan. Manba: [Telegram RPC errors](https://core.telegram.org/api/errors).
 
-Bepul ovoz sinovi o'tgach yoki OpenAI billing/kvotasi ishlagach, avval faqat o'zingiz bilan ovozni sinash uchun `ENABLE_VOICE_CALLS=true` qo'yiladi. Boshqalarga qo'ng'iroq keyinchalik `ENABLE_CONTACT_CALLS=true` va `ALLOWED_CALL_USER_IDS` ichida ularning Telegram raqamli ID si ko'rsatilgandagina ishlaydi. Kontakt oldindan rozilik bildirgan bo'lishi kerak; aniq topshirig'ingizsiz agent o'zi qo'ng'iroq qilmaydi. Oddiy SIM raqamiga mobil qo'ng'iroq bu loyihada mavjud emas.
+Bepul ovoz sinovi o'tgach yoki OpenAI billing/kvotasi ishlagach, avval faqat o'zingiz bilan ovozni sinash uchun `ENABLE_VOICE_CALLS=true` qo'yiladi. Kontaktga egasining aniq topshirig'i berilganda akkaunt tekshiriladi va uning raqamli ID si mahalliy ruxsatlar ro'yxatiga olinadi. `.env` dagi `ALLOWED_CALL_USER_IDS` ham qo'lda berilgan ruxsat sifatida qo'llanadi. Kontakt oldindan rozilik bildirgan bo'lishi kerak; aniq topshirig'ingizsiz agent o'zi qo'ng'iroq qilmaydi. Oddiy SIM raqamiga mobil qo'ng'iroq bu loyihada mavjud emas.
 
 ### Telegramsiz mahalliy sinov
 
