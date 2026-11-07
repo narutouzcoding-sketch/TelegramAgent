@@ -11,6 +11,7 @@ from logging.handlers import RotatingFileHandler
 from dotenv import dotenv_values, set_key
 
 from .config import ROOT, Settings
+from .owner_setup import configured_owner, pair_owner
 from .setup_inputs import prompt_phone, telegram_credentials
 
 
@@ -39,7 +40,6 @@ def process_lock():
 async def setup(from_env=False):
     from telethon import TelegramClient
     from telethon.errors import ApiIdInvalidError
-    from telethon.tl.types import User
 
     path = ROOT / ".env"
     if not path.exists():
@@ -80,21 +80,17 @@ async def setup(from_env=False):
         )
         me = await client.get_me()
         print(f"Yordamchi akkaunt: {me.first_name} (ID: {me.id})")
-        owner_ref = (
-            (existing.get("OWNER_TELEGRAM_ID") or existing.get("OWNER_TELEGRAM_USERNAME"))
-            if from_env
-            else None
+        if me.bot:
+            raise ValueError("Yordamchi oddiy Telegram akkaunti bo'lishi kerak.")
+        owner = await configured_owner(
+            client,
+            me.id,
+            existing.get("OWNER_TELEGRAM_USERNAME", ""),
+            existing.get("OWNER_TELEGRAM_ID", ""),
         )
-        owner_ref = (
-            owner_ref or input("SIZNING asosiy Telegram @username yoki raqamli ID: ").strip()
-        )
-        # Populate the entity cache from existing dialogs for numeric owner IDs.
-        if owner_ref.isdecimal():
-            await client.get_dialogs(limit=200)
-            owner_ref = int(owner_ref)
-        owner = await client.get_entity(owner_ref)
-        if not isinstance(owner, User) or owner.bot or owner.id == me.id:
-            raise ValueError("Asosiy akkaunt alohida inson akkaunti bo'lishi kerak.")
+        if owner is None:
+            print("Asosiy akkaunt sozlamalardan topilmadi. Bir martalik xabar bilan ulaymiz.")
+            owner = await pair_owner(client, me.id)
         print(f"Faqat ushbu akkauntga xizmat qiladi: {owner.first_name} (ID: {owner.id})")
         if input("Shu akkaunt sizniki bo'lsa HA yozing: ").strip().upper() != "HA":
             raise ValueError("Sozlash bekor qilindi; egasi tasdiqlanmadi.")
@@ -102,6 +98,7 @@ async def setup(from_env=False):
             "TELEGRAM_API_ID": str(api_id),
             "TELEGRAM_API_HASH": api_hash,
             "OWNER_TELEGRAM_ID": str(owner.id),
+            "OWNER_TELEGRAM_USERNAME": "@" + owner.username if owner.username else "",
         }
         if key:
             values["OPENAI_API_KEY"] = key
@@ -164,7 +161,13 @@ async def doctor(online=False):
             me = await client.get_me()
             if me.bot or me.id == settings.owner_id:
                 raise ValueError("Yordamchi uchun alohida oddiy akkaunt kerak.")
-            await client.get_input_entity(settings.owner_id)
+            owner = await configured_owner(
+                client, me.id, settings.owner_username, str(settings.owner_id)
+            )
+            if owner is None or owner.id != settings.owner_id:
+                raise ValueError(
+                    "Asosiy akkaunt topilmadi. login.ps1 orqali /pair xabar bilan qayta ulang."
+                )
             print("Telegram avtorizatsiya va egasi: OK")
         finally:
             await client.disconnect()

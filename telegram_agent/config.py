@@ -1,5 +1,5 @@
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -13,9 +13,11 @@ ROOT = Path(__file__).resolve().parent.parent
 @dataclass(frozen=True)
 class Settings:
     api_id: int
-    api_hash: str
+    api_hash: str = field(repr=False)
     owner_id: int
-    openai_key: str
+    openai_key: str = field(repr=False)
+    backup_openai_keys: tuple[str, ...] = field(default=(), repr=False)
+    owner_username: str = ""
     timezone: str = "Asia/Tashkent"
     text_model: str = "gpt-4.1-mini"
     realtime_model: str = "gpt-realtime-2.1"
@@ -33,7 +35,9 @@ class Settings:
         missing = [key for key in required if not os.getenv(key, "").strip()]
         if missing:
             raise ValueError(
-                "Avval setup.ps1 ni ishga tushiring. Yetishmayapti: " + ", ".join(missing)
+                "Yetishmayapti: "
+                + ", ".join(missing)
+                + ". OWNER_TELEGRAM_ID ni login.ps1 asosiy akkauntingizdan /pair xabari orqali topadi."
             )
         api_id, api_hash = telegram_credentials(
             os.environ["TELEGRAM_API_ID"], os.environ["TELEGRAM_API_HASH"]
@@ -43,6 +47,12 @@ class Settings:
             api_hash=api_hash,
             owner_id=int(os.environ["OWNER_TELEGRAM_ID"]),
             openai_key=os.environ["OPENAI_API_KEY"].strip(),
+            backup_openai_keys=tuple(
+                key.strip()
+                for key in os.getenv("OPENAI_BACKUP_API_KEYS", "").split(",")
+                if key.strip()
+            ),
+            owner_username=os.getenv("OWNER_TELEGRAM_USERNAME", "").strip(),
             timezone=os.getenv("TIMEZONE", "Asia/Tashkent"),
             text_model=os.getenv("TEXT_MODEL", "gpt-4.1-mini"),
             realtime_model=os.getenv("REALTIME_MODEL", "gpt-realtime-2.1"),
@@ -62,4 +72,8 @@ class Settings:
             raise ValueError("RING_TIMEOUT_SECONDS 5..90 oralig'ida bo'lishi kerak.")
         if result.reminder_grace_hours < 1:
             raise ValueError("REMINDER_GRACE_HOURS kamida 1 bo'lishi kerak.")
+        if len(result.backup_openai_keys) > 3:
+            raise ValueError(
+                "OPENAI_BACKUP_API_KEYS da ko'pi bilan 3 ta zaxira kalit bo'lishi mumkin."
+            )
         return result

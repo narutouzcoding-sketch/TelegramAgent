@@ -9,6 +9,7 @@ from contextlib import suppress
 
 import aiohttp
 
+from .ai_access import AIUnavailable, public_ai_error
 from .brain import TOOLS
 
 
@@ -39,14 +40,7 @@ class VoiceSession:
             timeout=aiohttp.ClientTimeout(total=None, sock_connect=15)
         )
         try:
-            self.ws = await self.http.ws_connect(
-                "wss://api.openai.com/v1/realtime",
-                params={"model": cfg.realtime_model},
-                headers={"Authorization": f"Bearer {cfg.openai_key}"},
-                heartbeat=20,
-                receive_timeout=90,
-                max_msg_size=8 * 1024 * 1024,
-            )
+            self.ws = await self.brain.ai.connect_realtime(self.http)
             await self.send(
                 {
                     "type": "session.update",
@@ -81,7 +75,9 @@ class VoiceSession:
                 async for message in self.ws:
                     event = self.decode(message)
                     if event.get("type") == "error":
-                        raise RuntimeError("Realtime session configuration rejected")
+                        raise AIUnavailable(
+                            public_ai_error(code=event.get("error", {}).get("code"))
+                        )
                     if event.get("type") == "session.updated":
                         break
                 else:
@@ -236,7 +232,11 @@ class VoiceSession:
         elif kind == "response.done":
             response = event.get("response", {})
             if response.get("status") == "failed":
-                raise RuntimeError("Realtime response failed")
+                raise AIUnavailable(
+                    public_ai_error(
+                        code=((response.get("status_details") or {}).get("error") or {}).get("code")
+                    )
+                )
             calls = [
                 item for item in response.get("output", []) if item.get("type") == "function_call"
             ]
@@ -261,7 +261,7 @@ class VoiceSession:
                 "response_cancel_not_active",
                 "conversation_already_has_active_response",
             }:
-                raise RuntimeError("Realtime error: " + str(code)[:80])
+                raise AIUnavailable(public_ai_error(code=code))
 
     @staticmethod
     def decode(message):
@@ -287,7 +287,7 @@ class VoiceSession:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            self.error = type(exc).__name__
+            self.error = public_ai_error(exc)
             self.closed.set()
 
     async def close(self):

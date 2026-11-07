@@ -3,7 +3,7 @@ import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from openai import AsyncOpenAI
+from .ai_access import AIClientPool
 
 
 def tool(name, description, props, required):
@@ -83,8 +83,21 @@ class Brain:
     def __init__(self, settings, store):
         self.settings = settings
         self.store = store
-        self.client = AsyncOpenAI(api_key=settings.openai_key, timeout=60, max_retries=1)
+        self.ai = AIClientPool(settings)
         self.lock = asyncio.Lock()
+
+    @property
+    def client(self):
+        return self.ai.current
+
+    @client.setter
+    def client(self, value):
+        # Enables an isolated adapter in tests without ever falling back to a real client.
+        self.ai.clients = [value]
+        self.ai.current = value
+
+    async def close(self):
+        await self.ai.close()
 
     def instructions(self):
         now = datetime.now(ZoneInfo(self.settings.timezone)).isoformat()
@@ -147,13 +160,15 @@ class Brain:
             self.store.remember("user", text)
             items = history + [{"role": "user", "content": text}]
             for _ in range(8):
-                response = await self.client.responses.create(
-                    model=self.settings.text_model,
-                    instructions=self.instructions(),
-                    input=items,
-                    tools=TOOLS,
-                    store=False,
-                    max_output_tokens=1800,
+                response = await self.ai.request(
+                    lambda client: client.responses.create(
+                        model=self.settings.text_model,
+                        instructions=self.instructions(),
+                        input=items,
+                        tools=TOOLS,
+                        store=False,
+                        max_output_tokens=1800,
+                    )
                 )
                 calls = [item for item in response.output if item.type == "function_call"]
                 if not calls:
@@ -175,20 +190,26 @@ class Brain:
             )
 
     async def transcribe(self, path):
-        with path.open("rb") as audio:
-            response = await self.client.audio.transcriptions.create(
-                model=self.settings.transcribe_model,
-                file=audio,
-                prompt="O'zbek tilidagi shaxsiy suhbat, rejalar, savollar va eslatmalar.",
-            )
+        async def request(client):
+            with path.open("rb") as audio:
+                return await client.audio.transcriptions.create(
+                    model=self.settings.transcribe_model,
+                    file=audio,
+                    prompt="O'zbek tilidagi shaxsiy suhbat, rejalar, savollar va eslatmalar.",
+                )
+
+        response = await self.ai.request(request)
         return response.text
 
     async def speech(self, text, path):
-        async with self.client.audio.speech.with_streaming_response.create(
-            model=self.settings.tts_model,
-            voice="coral",
-            input=text[:4000],
-            response_format="opus",
-            instructions="O'zbek tilida aniq, samimiy, tabiiy ohangda gapiring.",
-        ) as response:
-            await response.stream_to_file(path)
+        async def request(client):
+            async with client.audio.speech.with_streaming_response.create(
+                model=self.settings.tts_model,
+                voice="coral",
+                input=text[:4000],
+                response_format="opus",
+                instructions="O'zbek tilida aniq, samimiy, tabiiy ohangda gapiring.",
+            ) as response:
+                await response.stream_to_file(path)
+
+        await self.ai.request(request)

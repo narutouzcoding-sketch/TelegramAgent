@@ -11,7 +11,7 @@ Kod, Python 3.12 virtual muhiti, o'rnatilgan kutubxonalar, qat'iy versiyalar yoz
 1. **Yordamchi uchun alohida oddiy Telegram akkaunti.** O'zingizning asosiy akkauntingizdan shu akkauntga qo'ng'iroq qilasiz. Agent shu alohida akkauntga kiradi. BotFather tokeni kerak emas. Telegram `phone.requestCall` usulini faqat foydalanuvchi akkauntlariga beradi: [rasmiy Telegram API](https://core.telegram.org/method/phone.requestCall).
 2. [my.telegram.org/apps](https://my.telegram.org/apps) sahifasidan `api_id` va `api_hash`.
 3. [OpenAI API key](https://platform.openai.com/api-keys), tegishli modelga ruxsat va API uchun ishlaydigan billing. Chatdagi obunangiz yoki shu suhbat agent uchun API kaliti vazifasini bajarmaydi. API foydalanish xarajatlari akkauntingizda hisoblanadi; platforma hisobingizdagi billing/ruxsatlarni tekshiring.
-4. Asosiy Telegram akkauntingizning `@username` yoki raqamli ID si. Agent faqat tasdiqlangan raqamli ID bilan ishlaydi.
+4. Asosiy Telegram akkauntingizdan yordamchiga bir martalik `/pair` xabarini yuborish imkoniyati. Username yoki ID ni oldindan bilish shart emas. Agent faqat tasdiqlangan raqamli ID bilan ishlaydi.
 5. Kompyuter yoqilgan, uyqu holatiga kirmagan va internetga ulangan bo'lishi kerak. FFmpeg bu kompyuterda mavjud. Windows uchun NTgCalls native kutubxonasi o'rnatilgan.
 
 Kalit, login kodi, 2FA paroli va Telegram sessiyasini chatga yubormang. Ularni faqat mahalliy sozlash oynasida kiriting.
@@ -26,11 +26,14 @@ Kalit, login kodi, 2FA paroli va Telegram sessiyasini chatga yubormang. Ularni f
 TELEGRAM_API_ID=my_telegram_org_dagi_son
 TELEGRAM_API_HASH=my_telegram_org_dagi_32_belgili_hash
 TELEGRAM_PHONE=+mamlakat_kodi_va_yordamchi_raqami
-OWNER_TELEGRAM_USERNAME=@sizning_asosiy_akkauntingiz
+OWNER_TELEGRAM_USERNAME=
+OWNER_TELEGRAM_ID=
 OPENAI_API_KEY=sizning_openai_api_kalitingiz
 ```
 
-Bu yuqoridagi qiymatlar namuna; o'z qiymatlaringiz bilan almashtiring. API ID va API hash aynan bitta `my.telegram.org/apps` ilovasidan olinadi. API hash BotFather tokeni yoki OpenAI API kaliti emas. `TELEGRAM_PHONE` yangi yordamchi akkauntning raqami; `OWNER_TELEGRAM_USERNAME` sizning asosiy shaxsiy akkauntingizniki. `OWNER_TELEGRAM_ID` ni avval bo'sh qoldirishingiz mumkin: login username orqali raqamli ID ni topib, shu maydonga saqlaydi. Asosiy akkauntdan yordamchiga oldindan bir marta yozing.
+Bu yuqoridagi qiymatlar namuna; API va telefon qiymatlarini o'zingiznikiga almashtiring. API ID va API hash aynan bitta `my.telegram.org/apps` ilovasidan olinadi. API hash BotFather tokeni yoki OpenAI API kaliti emas. `TELEGRAM_PHONE` yangi yordamchi akkauntning raqami. Ikki `OWNER_...` maydonini avval bo'sh qoldiring.
+
+**OWNER kim?** Bu yordamchini boshqaradigan sizning asosiy, avvaldan ishlatadigan shaxsiy Telegram akkauntingiz. Yangi `Telegram Agent` akkaunti OWNER emas. `OWNER_TELEGRAM_ID` Telegramdagi foydalanuvchi ID si; `TELEGRAM_API_ID` ilova ID si. Ular boshqa-boshqa qiymatlar. `@asosiy_akkauntingiz` oldingi namunadagi o'rinbosar matn edi, haqiqiy username emas.
 
 ```powershell
 cd 'D:\My Projects\TelegramAgent'
@@ -38,6 +41,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\login.ps1
 ```
 
 Login API ID/hash ni qayta so'ramaydi. Telegram kodi yoki 2FA paroli kerak bo'lsa mahalliy oynada so'raydi. Ko'rsatilgan asosiy akkaunt sizniki ekanini tekshiring. OpenAI kaliti hali bo'lmasa ham Telegram sessiyasini tayyorlash mumkin; agentni boshlashdan oldin kalitni `.env` ga kiriting. Login kodi SMS o'rniga yangi akkaunt ochiq turgan Telegram ilovasiga kelishi mumkin.
+
+Yordamchi akkauntga kirilgach, dastur bir martalik `/pair ...` buyrug'ini ko'rsatadi. Uni **asosiy shaxsiy akkauntingizdan yangi yordamchi akkauntiga** xabar qilib yuboring. Terminal ko'rsatgan asosiy akkaunt sizniki bo'lsa `HA` deb tasdiqlang. ID va mavjud bo'lsa username avtomatik saqlanadi. Ulash kodi 5 daqiqa amal qiladi; uni chat yoki boshqa odamlarga ulashmang.
+
+Avval asosiy akkauntingizning haqiqiy username/ID si kiritilgan bo'lsa dastur undan foydalanadi. Username eski numeric ID dan ustun turadi. Noto'g'ri ID, namunadagi username yoki `Could not find the input entity` holatida sozlash bir martalik `/pair` usuliga o'tadi. Username va ID ni bo'shatish kerakli akkauntni boshidan ulashga imkon beradi. Bu yordamchi Telegram sessiyasini o'chirmaydi: kirish muvaffaqiyatli bo'lgan bo'lsa, kod va 2FA parolini qayta kiritish odatda kerak bo'lmaydi.
 
 `ApiIdInvalidError` / `API_ID_INVALID` chiqsa, Telegram API ID yoki API hash ni qabul qilmagan. Ularni bir xil ilova sahifasidan qayta nusxalang. Telefon raqami ham to'liq xalqaro formatda bo'lishi kerak, masalan O'zbekiston uchun `+998` va keyin 9 raqam. Dastur noto'g'ri shakldagi hash yoki mamlakat kodisiz raqamni tarmoqqa chiqishdan oldin aniqlaydi. Shakli to'g'ri bo'lishi juftlik Telegram tomonidan qabul qilinishini kafolatlamaydi.
 
@@ -127,6 +134,14 @@ Standart qo'ng'iroq 15 daqiqa, jiringlash 35 soniya bilan cheklangan. `.env` dag
 Matn va ovoz javob olish uchun OpenAI xizmatiga, Telegram xabarlari Telegramga uzatiladi. Mahalliy ma'lumotlar shifrlanmagan; Windows foydalanuvchi akkauntingiz orqali himoyalanadi. Loyiha papkasiga kiradigan odamlardan kalit va sessiyani himoya qiling.
 
 Model nomlari `.env` orqali o'zgaradi: `TEXT_MODEL`, `REALTIME_MODEL`, `TRANSCRIBE_MODEL`, `TTS_MODEL`, `VOICE`. Standart matn modeli `gpt-4.1-mini`, qo'ng'iroq `gpt-realtime-2.1`. Rasmiy manbalar: [Realtime suhbatlar](https://developers.openai.com/api/docs/guides/realtime-conversations), [function calling](https://developers.openai.com/api/docs/guides/function-calling), [text to speech](https://developers.openai.com/api/docs/guides/text-to-speech), [PyTgCalls](https://github.com/pytgcalls/pytgcalls).
+
+## AI kalitlari va zaxira ulanish
+
+Asosiy kalit `OPENAI_API_KEY` da. Qo'shimcha, ishlatishga ruxsatingiz bo'lgan ko'pi bilan 3 ta zaxira kalitni `OPENAI_BACKUP_API_KEYS` maydoniga vergul bilan ajratib yozish mumkin. Maydon bo'sh bo'lsa bitta kalit bilan ishlaydi. Kalitlar log yoki holat xabarlariga chiqarilmaydi.
+
+Vaqtinchalik tarmoq/timeout yoki `5xx` server xatosida keyingi sozlangan kalit bilan so'rov qayta bajariladi. Server `Retry-After` talab qilsa u hurmat qilinadi; juda uzun kutish talabida bu urinish to'xtaydi. Muvaffaqiyatli ishlagan kalit keyingi so'rovlarga ham tanlanadi. Bu matn, ovoz transkripsiyasi, TTS va Realtime ulanishining dastlabki WebSocket bosqichiga tegishli. Faol Realtime suhbat o'rtasida socket uzilsa sessiya boshqa akkauntda avtomatik davom ettirilmaydi; `/call` bilan yangi qo'ng'iroq kerak bo'ladi.
+
+`429` tezlik cheklovi, kredit/kvota tugashi, billing/spend/usage limiti yoki `401/403` avtorizatsiya/ruxsat xatosida boshqa profilga avtomatik o'tilmaydi. Dastur sababini bildiradi. Kalit almashtirishning o'zi kredit qo'shmaydi: OpenAI limitlari tashkilot va loyiha darajasida bo'lishi mumkin. Kredit tugasa billingni to'ldirish, limit xatosida tegishli limit/ruxsatni tekshirish kerak. Bir so'rovdagi token/context chegarasi ham boshqa kalit qo'yish bilan kattalashmaydi. Manbalar: OpenAI Docs [rate limits](https://developers.openai.com/api/docs/guides/rate-limits) va [error codes](https://developers.openai.com/api/docs/guides/error-codes).
 
 ## Tekshirish
 

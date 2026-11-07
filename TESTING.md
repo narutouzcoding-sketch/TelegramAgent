@@ -9,7 +9,7 @@
 - NTgCalls native DLL importi: muvaffaqiyatli.
 - 48 kHz mono PCM jonli jo'natish va qabul qilish konfiguratsiyalari: yaratildi.
 - `ruff check telegram_agent tests`: muvaffaqiyatli.
-- `python -m pytest -q -W error::RuntimeWarning`: **46 passed**, ogohlantirishsiz.
+- `python -m pytest -q -W error::RuntimeWarning`: **67 passed**, ogohlantirishsiz.
 - `uv lock --check`: muvaffaqiyatli.
 - Barcha PowerShell skriptlarining sintaksisi: tekshirildi.
 
@@ -21,6 +21,12 @@ raqam shaklini tekshirish, API_ID_INVALID izohi, kontakt nomi noaniqligida qo'ng
 faqat egasidan topshiriq olish, qo'ng'iroq navbati/idempotensiya/bekor qilish/qayta boshlash va
 qabul qiluvchi qo'ng'iroqni erta uzganda xabar to'liq yetkazilgan deb belgilamaslik.
 Mahalliy WAV faylini FFmpeg orqali haqiqiy PCM48 formatga aylantirish ham tekshirildi.
+Bir martalik `/pair` bilan boshqaruvchi akkauntni aniqlash, bot/guruh/yordamchining o'zidan
+kelgan ulash xabarini rad etish, Unicode xabarlarini xavfsiz qabul qilish, noto'g'ri owner ID
+dan keyin loginni takrorlamasdan davom ettirish, username ning eski ID dan ustunligi tekshirildi.
+AI zaxira kaliti tarmoq/5xx xatosida ishlashi, 429/kvota/billing/401/403 holatlarida kalit
+aylanmasligi, Retry-After talabini aylanib o'tmaslik, audio faylni qayta urinishda boshidan
+o'qish va Realtime kvota xatosining tushunarli izohi tekshirildi.
 Tashqi xizmatlar mock bilan almashtirilgan; pulli API so'rovi yuborilmadi.
 
 ## Sizning akkauntingiz bilan qolgan tekshiruvlar

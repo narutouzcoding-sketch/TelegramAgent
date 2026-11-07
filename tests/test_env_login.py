@@ -44,3 +44,22 @@ async def test_invalid_application_error_explains_pair_without_leaking_hash(monk
         await cli.setup(from_env=True)
     assert "a" * 32 not in str(error.value)
     client.disconnect.assert_awaited_once()
+
+
+async def test_unknown_owner_id_uses_pairing_without_repeating_telegram_sign_in(
+    monkeypatch, tmp_path
+):
+    client = prepare(monkeypatch, tmp_path)
+    with (tmp_path / ".env").open("a", encoding="utf-8") as file:
+        file.write("OWNER_TELEGRAM_USERNAME=@asosiy_akkauntingiz\nOWNER_TELEGRAM_ID=12345678\n")
+    client.get_dialogs = AsyncMock()
+    client.get_entity = AsyncMock(side_effect=ValueError("Could not find input entity"))
+    pair = AsyncMock(return_value=User(id=42, first_name="Owner", username="real_owner"))
+    monkeypatch.setattr(cli, "pair_owner", pair)
+    monkeypatch.setattr("builtins.input", Mock(return_value="HA"))
+    await cli.setup(from_env=True)
+    pair.assert_awaited_once_with(client, 1)
+    values = dotenv_values(tmp_path / ".env")
+    assert values["OWNER_TELEGRAM_ID"] == "42"
+    assert values["OWNER_TELEGRAM_USERNAME"] == "@real_owner"
+    client.start.assert_awaited_once()

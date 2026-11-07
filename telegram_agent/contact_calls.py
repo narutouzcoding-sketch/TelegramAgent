@@ -7,9 +7,11 @@ import tempfile
 from contextlib import suppress
 from pathlib import Path
 
+from openai import APIError
 from telethon import functions
 from telethon.tl.types import User
 
+from .ai_access import public_ai_error
 from .config import ROOT
 from .setup_inputs import international_phone
 
@@ -164,7 +166,13 @@ async def execute_job(app, job):
         raise
     except Exception as exc:
         # Only our explicit input/recipient errors are suitable for the owner; SDK bodies stay private.
-        reason = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
+        reason = (
+            public_ai_error(exc)
+            if isinstance(exc, APIError)
+            else str(exc)
+            if isinstance(exc, ValueError)
+            else type(exc).__name__
+        )
         app.store.finish_contact_call(job["id"], "failed", reason)
         await app.send_text(
             f"Qo'ng'iroq #{job['id']} yakunlanmadi: {reason[:200]}. Qayta terilmadi."

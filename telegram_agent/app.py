@@ -6,10 +6,13 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from openai import APIError
 from telethon import TelegramClient, events
 
+from .ai_access import AIUnavailable, public_ai_error
 from .brain import Brain
 from .config import ROOT
+from .owner_setup import configured_owner
 from .scheduler import Scheduler
 from .store import Store
 
@@ -77,7 +80,7 @@ class AgentApp:
             await self._run()
         finally:
             await self.telegram.disconnect()
-            await self.brain.client.close()
+            await self.brain.close()
             self.store.close()
 
     async def _run(self):
@@ -91,8 +94,14 @@ class AgentApp:
         me = await self.telegram.get_me()
         if me.bot or me.id == self.settings.owner_id:
             raise ValueError("Yordamchi uchun siznikidan boshqa, oddiy Telegram akkaunti kerak.")
-        self.owner = await self.telegram.get_input_entity(self.settings.owner_id)
-        owner_user = await self.telegram.get_entity(self.owner)
+        owner_user = await configured_owner(
+            self.telegram, me.id, self.settings.owner_username, str(self.settings.owner_id)
+        )
+        if owner_user is None or owner_user.id != self.settings.owner_id:
+            raise ValueError(
+                "Asosiy boshqaruvchi akkaunt topilmadi yoki username/ID mos emas. login.ps1 orqali qayta ulang; sessiya o'chirilmaydi."
+            )
+        self.owner = await self.telegram.get_input_entity(owner_user)
         self.owner_name = owner_user.first_name or "foydalanuvchi"
         from .contact_calls import RecipientResolver, run_queue
 
@@ -190,7 +199,12 @@ class AgentApp:
                 ready.set_exception(ConnectionError("Call did not connect"))
             log.warning("Call failed type=%s", type(exc).__name__)
             await self.send_text(
-                "Qo'ng'iroq ulanmagan yoki ovozli xizmatda xato bo'ldi. "
+                (
+                    public_ai_error(exc)
+                    if isinstance(exc, (APIError, AIUnavailable))
+                    else "Qo'ng'iroq ulanmagan yoki ovozli xizmatda xato bo'ldi. "
+                )
+                + " "
                 "Yozishib davom etishingiz mumkin. /call — qayta urinish."
             )
         finally:
@@ -235,7 +249,7 @@ class AgentApp:
                         "Qo'ng'iroq vaqti chegarasiga yetdi. /call bilan davom eting."
                     )
                 if voice.error:
-                    raise RuntimeError("Voice stream failed")
+                    raise AIUnavailable(voice.error)
                 return "call_connected"
             finally:
                 self.voice = None
@@ -426,6 +440,11 @@ class AgentApp:
             except Exception as exc:
                 log.warning("Message handling failed type=%s", type(exc).__name__)
                 await self.send_text(
-                    "So'rovni yakunlay olmadim. /reminders va /plans bilan "
+                    (
+                        public_ai_error(exc)
+                        if isinstance(exc, APIError)
+                        else "So'rovni yakunlay olmadim."
+                    )
+                    + " /reminders va /plans bilan "
                     "saqlangan amallarni tekshiring, keyin qayta urinib ko'ring."
                 )
