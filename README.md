@@ -1,6 +1,6 @@
 # TelegramAgent
 
-Telegram ichida yozishadigan, ovozli xabarga javob beradigan, haqiqiy shaxsiy qo'ng'iroqlarni qabul qiladigan va eslatish uchun sizga qo'ng'iroq qiladigan AI yordamchi.
+Telegram ichida yozishadigan, ovozli xabarga javob beradigan, shaxsiy qo'ng'iroqlarni qabul qiladigan, sizga eslatish uchun qo'ng'iroq qiladigan va aniq topshirig'ingiz bo'yicha boshqa Telegram foydalanuvchisiga xabaringizni ovoz bilan yetkazadigan AI yordamchi.
 
 ## Hozirgi holat
 
@@ -17,6 +17,31 @@ Kod, Python 3.12 virtual muhiti, o'rnatilgan kutubxonalar, qat'iy versiyalar yoz
 Kalit, login kodi, 2FA paroli va Telegram sessiyasini chatga yubormang. Ularni faqat mahalliy sozlash oynasida kiriting.
 
 ## Boshlash
+
+### `.env` ni qo'lda to'ldirish
+
+`D:\My Projects\TelegramAgent\.env` faylida quyidagilarni o'zingiz kiriting:
+
+```dotenv
+TELEGRAM_API_ID=my_telegram_org_dagi_son
+TELEGRAM_API_HASH=my_telegram_org_dagi_32_belgili_hash
+TELEGRAM_PHONE=+mamlakat_kodi_va_yordamchi_raqami
+OWNER_TELEGRAM_USERNAME=@sizning_asosiy_akkauntingiz
+OPENAI_API_KEY=sizning_openai_api_kalitingiz
+```
+
+Bu yuqoridagi qiymatlar namuna; o'z qiymatlaringiz bilan almashtiring. API ID va API hash aynan bitta `my.telegram.org/apps` ilovasidan olinadi. API hash BotFather tokeni yoki OpenAI API kaliti emas. `TELEGRAM_PHONE` yangi yordamchi akkauntning raqami; `OWNER_TELEGRAM_USERNAME` sizning asosiy shaxsiy akkauntingizniki. `OWNER_TELEGRAM_ID` ni avval bo'sh qoldirishingiz mumkin: login username orqali raqamli ID ni topib, shu maydonga saqlaydi. Asosiy akkauntdan yordamchiga oldindan bir marta yozing.
+
+```powershell
+cd 'D:\My Projects\TelegramAgent'
+powershell -NoProfile -ExecutionPolicy Bypass -File .\login.ps1
+```
+
+Login API ID/hash ni qayta so'ramaydi. Telegram kodi yoki 2FA paroli kerak bo'lsa mahalliy oynada so'raydi. Ko'rsatilgan asosiy akkaunt sizniki ekanini tekshiring. OpenAI kaliti hali bo'lmasa ham Telegram sessiyasini tayyorlash mumkin; agentni boshlashdan oldin kalitni `.env` ga kiriting. Login kodi SMS o'rniga yangi akkaunt ochiq turgan Telegram ilovasiga kelishi mumkin.
+
+`ApiIdInvalidError` / `API_ID_INVALID` chiqsa, Telegram API ID yoki API hash ni qabul qilmagan. Ularni bir xil ilova sahifasidan qayta nusxalang. Telefon raqami ham to'liq xalqaro formatda bo'lishi kerak, masalan O'zbekiston uchun `+998` va keyin 9 raqam. Dastur noto'g'ri shakldagi hash yoki mamlakat kodisiz raqamni tarmoqqa chiqishdan oldin aniqlaydi. Shakli to'g'ri bo'lishi juftlik Telegram tomonidan qabul qilinishini kafolatlamaydi.
+
+### Savol-javob orqali sozlash
 
 PowerShell oching:
 
@@ -55,10 +80,33 @@ Vaqt zonasi: `Asia/Tashkent`. Agent muvaffaqiyatli saqlangan eslatmaning ID si v
 | `/hangup` | Qo'ng'iroqni tugatadi |
 | `/plans` | Ochiq rejalarni ko'rsatadi |
 | `/reminders` | Kutilayotgan eslatmalarni ko'rsatadi |
+| `/contacts` | Agentga ulashilgan kontaktlar |
+| `/callto @username \| aytiladigan gap` | Bir kishiga xabarni qo'ng'iroq bilan yetkazish |
+| `/calls` | Topshirilgan qo'ng'iroqlar va natijalar |
+| `/cancelcall ID` | Navbatdagi yoki hozir bajarilayotgan kontakt qo'ng'irog'ini to'xtatish |
 | `/status` | Agent holati |
 | `/help` | Yordam |
 
 Reja qo'shishning o'zi eslatma yaratmaydi. Eslatishni ham ayting. Bir martalik, kunlik va haftalik eslatmalar bor. Murakkab takrorlash (masalan, oyning har uchinchi kuni) hali qo'llanmaydi. Internetdan jonli qidirish qo'shilmagan; joriy yangilik yoki narxni tekshirgan deb hisoblamang.
+
+## Boshqa kishiga qo'ng'iroq qilish
+
+Masalan: «@username ga qo'ng'iroq qilib, bugun soat 18:00 da uchrashishimizni ayt». Yoki aniq buyruq:
+
+```text
+/callto @username | Bugun soat 18:00 da uchrashamiz.
+/callto +998901234567 | Uchrashuv ertaga qoldirildi.
+```
+
+Tabiiy matn yoki ovozli suhbatda ham shunday topshiriq berish mumkin. Agent faqat sizning aniq ko'rsatmangiz asosida bitta kishiga berilgan xabarni yetkazish topshirig'ini yaratadi. Siz bilan qo'ng'iroq faol bo'lsa, u tugashini kutadi. Navbatga qo'yish hali xabar yetkazilganini anglatmaydi; `/calls` dan natijani ko'ring. `/hangup` faol qo'ng'iroqni yoki hozir tayyorlanayotgan kontakt topshirig'ini to'xtatadi. `/cancelcall ID` bilan alohida topshiriqni bekor qilish mumkin.
+
+Qo'ng'iroq **Telegram orqali** bo'ladi: oddiy mobil/GSM tarmog'iga qo'ng'iroq integratsiyasi yo'q. Telefon raqami Telegram akkauntiga tegishli bo'lishi, qabul qiluvchining privacy sozlamalari topish va qo'ng'iroqni ruxsat qilishi kerak. Aks holda `@username` dan foydalaning yoki kerakli sozlamani qabul qiluvchi bilan tekshiring.
+
+Asosiy akkauntingizning kontaktlari yordamchiga avtomatik ko'chmaydi. Kerakli kontaktni Telegramda **kontakt sifatida ulashing**; agent ism va raqamni mahalliy bazada saqlaydi. Keyin ism bilan topshiriq berishingiz mumkin. Yordamchi akkauntning o'z Telegram kontaktlari ham ism orqali qidiriladi. Bir ism bir nechta kishiga tegishli bo'lsa, dastur taxmin qilmaydi: aniq username yoki raqam so'raydi. Kontakt yuborishning o'zi qo'ng'iroq qilish buyrug'i emas.
+
+Qabul qiluvchi javob bergach, tayyor xabar o'qiladi: agent o'zini egasining **AI yordamchisi** deb tanishtiradi. Qabul qiluvchining ovozi yozilmaydi, OpenAI ga uzatilmaydi va u agentning reja yoki eslatmalarini boshqara olmaydi. Bu usulda qabul qiluvchi bilan erkin AI suhbat qo'llanmaydi; siz bergan xabar ovoz bilan yetkaziladi.
+
+Xabar 1500 belgigacha, tayyor ovoz 3 daqiqagacha. Bir vaqtda 10 tagacha navbatdagi topshiriq saqlanadi. Javob berilmasa yoki qo'ng'iroq uzilsa qayta-qayta terilmaydi. Dastur o'rtada to'xtab qolgan topshiriq qayta ishga tushganda avtomatik takrorlanmaydi; 10 daqiqadan eski navbatlar qayta ishga tushishda bekor qilinadi. `sent` holati qo'ng'iroqqa javob berilib audio uzatilganini bildiradi; inson eshitgani yoki tushunganini alohida tasdiqlamaydi.
 
 ## Eslatish qanday ishlaydi?
 

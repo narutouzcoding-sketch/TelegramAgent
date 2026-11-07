@@ -11,6 +11,7 @@ from logging.handlers import RotatingFileHandler
 from dotenv import dotenv_values, set_key
 
 from .config import ROOT, Settings
+from .setup_inputs import prompt_phone, telegram_credentials
 
 
 @contextmanager
@@ -35,8 +36,9 @@ def process_lock():
             msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
 
 
-async def setup():
+async def setup(from_env=False):
     from telethon import TelegramClient
+    from telethon.errors import ApiIdInvalidError
     from telethon.tl.types import User
 
     path = ROOT / ".env"
@@ -44,27 +46,48 @@ async def setup():
         shutil.copy(ROOT / ".env.example", path)
     existing = dotenv_values(path)
     print("TelegramAgent sozlash. Maxfiy qiymatlar chatga yuborilmaydi.")
-    print("1. https://my.telegram.org/apps dan api_id va api_hash oling.")
-    print("2. Yordamchi uchun alohida Telegram akkauntiga kiring.")
-    print("3. Asosiy akkauntingizdan yordamchi akkauntiga bir marta xabar yuboring.")
-    api_id = int(input("Telegram API ID: ").strip() or existing.get("TELEGRAM_API_ID") or "0")
-    api_hash = getpass.getpass("Telegram API hash (yashirin; bo'sh = avvalgisi): ").strip()
-    api_hash = api_hash or existing.get("TELEGRAM_API_HASH", "")
-    key = getpass.getpass("OpenAI API key (yashirin; bo'sh = avvalgisi): ").strip()
-    key = key or existing.get("OPENAI_API_KEY", "")
-    if api_id <= 0 or not api_hash or not key:
-        raise ValueError("API ID, hash va OpenAI API key kerak.")
+    print("Asosiy akkauntingizdan yordamchi akkauntiga bir marta xabar yuboring.")
+    if from_env:
+        print("API ma'lumotlari .env faylidan o'qiladi; qayta kiritish shart emas.")
+        api_id = existing.get("TELEGRAM_API_ID", "")
+        api_hash = existing.get("TELEGRAM_API_HASH", "")
+        key = existing.get("OPENAI_API_KEY", "")
+    else:
+        api_id = input("Telegram API ID: ").strip() or existing.get("TELEGRAM_API_ID") or "0"
+        api_hash = getpass.getpass("Telegram API hash (yashirin; bo'sh = avvalgisi): ").strip()
+        api_hash = api_hash or existing.get("TELEGRAM_API_HASH", "")
+        key = getpass.getpass("OpenAI API key (yashirin; bo'sh = avvalgisi): ").strip()
+        key = key or existing.get("OPENAI_API_KEY", "")
+    api_id, api_hash = telegram_credentials(api_id, api_hash)
+    if not key and not from_env:
+        raise ValueError("OpenAI API key kerak.")
+    if not key:
+        print(
+            "OpenAI API key hali yo'q. Telegram login mumkin; agentni boshlashdan oldin .env ga kiriting."
+        )
+    saved_phone = existing.get("TELEGRAM_PHONE", "") if from_env else ""
+    if saved_phone:
+        from .setup_inputs import international_phone
+
+        saved_phone = international_phone(saved_phone)
     (ROOT / "data").mkdir(exist_ok=True)
     client = TelegramClient(str(ROOT / "data" / "assistant"), api_id, api_hash)
     try:
         await client.start(
-            phone=lambda: input("Yordamchi akkaunt telefon raqami (+998...): ").strip(),
+            phone=saved_phone or prompt_phone,
             password=lambda: getpass.getpass("Telegram 2FA paroli: "),
             code_callback=lambda: getpass.getpass("Telegram login kodi: "),
         )
         me = await client.get_me()
         print(f"Yordamchi akkaunt: {me.first_name} (ID: {me.id})")
-        owner_ref = input("SIZNING asosiy Telegram @username yoki raqamli ID: ").strip()
+        owner_ref = (
+            (existing.get("OWNER_TELEGRAM_ID") or existing.get("OWNER_TELEGRAM_USERNAME"))
+            if from_env
+            else None
+        )
+        owner_ref = (
+            owner_ref or input("SIZNING asosiy Telegram @username yoki raqamli ID: ").strip()
+        )
         # Populate the entity cache from existing dialogs for numeric owner IDs.
         if owner_ref.isdecimal():
             await client.get_dialogs(limit=200)
@@ -75,13 +98,23 @@ async def setup():
         print(f"Faqat ushbu akkauntga xizmat qiladi: {owner.first_name} (ID: {owner.id})")
         if input("Shu akkaunt sizniki bo'lsa HA yozing: ").strip().upper() != "HA":
             raise ValueError("Sozlash bekor qilindi; egasi tasdiqlanmadi.")
-        for name, value in {
+        values = {
             "TELEGRAM_API_ID": str(api_id),
             "TELEGRAM_API_HASH": api_hash,
-            "OPENAI_API_KEY": key,
             "OWNER_TELEGRAM_ID": str(owner.id),
-        }.items():
+        }
+        if key:
+            values["OPENAI_API_KEY"] = key
+        for name, value in values.items():
             set_key(str(path), name, value)
+    except ApiIdInvalidError:
+        raise ValueError(
+            "Telegram API ID yoki API hash ni qabul qilmadi (API_ID_INVALID). "
+            "my.telegram.org/apps dagi bir xil ilovadan api_id va api_hash ni qayta nusxalang. "
+            "api_hash OpenAI kaliti yoki BotFather tokeni emas. "
+            "Telefon raqamini ham + va mamlakat kodi bilan kiriting. "
+            "Bu xato OpenAI yoki internet sozlamasi xatosi emas."
+        ) from None
     finally:
         await client.disconnect()
     print("Sozlandi. start.ps1 ni ishga tushiring. Kalitlar .env da, Telegram sessiya data/ da.")
@@ -140,13 +173,13 @@ async def doctor(online=False):
 
 def main():
     parser = argparse.ArgumentParser(description="Shaxsiy Telegram AI yordamchi")
-    parser.add_argument("command", choices=["setup", "doctor", "run"])
+    parser.add_argument("command", choices=["setup", "login", "doctor", "run"])
     parser.add_argument("--online", action="store_true", help="doctor: tashqi API larni tekshirish")
     args = parser.parse_args()
     try:
-        if args.command == "setup":
+        if args.command in {"setup", "login"}:
             with process_lock():
-                asyncio.run(setup())
+                asyncio.run(setup(from_env=args.command == "login"))
         elif args.command == "doctor":
             with process_lock():
                 return asyncio.run(doctor(args.online))

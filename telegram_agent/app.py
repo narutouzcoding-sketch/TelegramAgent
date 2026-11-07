@@ -21,6 +21,10 @@ HELP = """Men shaxsiy AI yordamchingizman. O'zbekcha yozing, ovozli xabar yubori
 /hangup — qo'ng'iroqni tugatish
 /plans — ochiq rejalar
 /reminders — eslatmalar
+/contacts — ulashilgan kontaktlar
+/callto @username | aytiladigan gap — kontaktga qo'ng'iroq
+/calls — topshirilgan qo'ng'iroqlar holati
+/cancelcall ID — navbatdagi qo'ng'iroqni bekor qilish
 /status — holat
 /help — yordam
 
@@ -51,8 +55,15 @@ class AgentApp:
         self.message_lock = asyncio.Lock()
         self.call_task = None
         self.scheduler_task = None
+        self.contact_queue_task = None
+        self.contact_job_task = None
+        self.contact_job_id = None
         self.background_tasks = set()
         self.owner = None
+        self.owner_name = "foydalanuvchi"
+        self.recipient_resolver = None
+        self.relay_target = None
+        self.relay_ended = None
 
     async def send_text(self, text):
         # Plain text prevents model-generated Markdown links from changing message meaning.
@@ -81,6 +92,11 @@ class AgentApp:
         if me.bot or me.id == self.settings.owner_id:
             raise ValueError("Yordamchi uchun siznikidan boshqa, oddiy Telegram akkaunti kerak.")
         self.owner = await self.telegram.get_input_entity(self.settings.owner_id)
+        owner_user = await self.telegram.get_entity(self.owner)
+        self.owner_name = owner_user.first_name or "foydalanuvchi"
+        from .contact_calls import RecipientResolver, run_queue
+
+        self.recipient_resolver = RecipientResolver(self.telegram, self.store, me.id)
         self.calls = PyTgCalls(self.telegram)
         self.telegram.add_event_handler(self.on_message, events.NewMessage(incoming=True))
 
@@ -91,12 +107,21 @@ class AgentApp:
                 with suppress(Exception):
                     await self.calls.leave_call(update.chat_id)
                 return
+            if self.call_lock.locked():
+                with suppress(Exception):
+                    await self.calls.leave_call(update.chat_id)
+                await self.send_text(
+                    "Boshqa qo'ng'iroq faol. /hangup bilan uni to'xtatishingiz mumkin."
+                )
+                return
             self.spawn(self.safe_call("Salom! Men AI yordamchingizman. Suhbatni boshlang."))
 
         @self.calls.on_update(filters.chat_update(ChatUpdate.Status.LEFT_CALL))
         async def ended(_, update):
             if update.chat_id == self.settings.owner_id and self.voice:
                 self.voice.closed.set()
+            if update.chat_id == self.relay_target and self.relay_ended:
+                self.relay_ended.set()
 
         @self.calls.on_update(filters.stream_frame(Direction.INCOMING, Device.MICROPHONE))
         async def audio(_, update):
@@ -108,6 +133,7 @@ class AgentApp:
             await self.calls.start()
             scheduler = Scheduler(self.store, self.deliver, self.settings.reminder_grace_hours)
             self.scheduler_task = asyncio.create_task(scheduler.run())
+            self.contact_queue_task = asyncio.create_task(run_queue(self))
             log.info("Agent started; owner allowlist active")
             print(
                 "TelegramAgent ishlayapti. Yordamchi akkauntiga yozing yoki qo'ng'iroq qiling.",
@@ -116,15 +142,18 @@ class AgentApp:
             # A scheduler crash must not silently disable reminders while chat still works.
             disconnected = asyncio.ensure_future(self.telegram.disconnected)
             done, _ = await asyncio.wait(
-                [self.scheduler_task, disconnected], return_when=asyncio.FIRST_COMPLETED
+                [self.scheduler_task, self.contact_queue_task, disconnected],
+                return_when=asyncio.FIRST_COMPLETED,
             )
             for task in done:
                 task.result()
         finally:
-            if self.scheduler_task:
-                self.scheduler_task.cancel()
+            for worker in [self.scheduler_task, self.contact_queue_task]:
+                if not worker:
+                    continue
+                worker.cancel()
                 with suppress(asyncio.CancelledError):
-                    await self.scheduler_task
+                    await worker
             await self.hangup()
             for task in list(self.background_tasks):
                 task.cancel()
@@ -218,7 +247,7 @@ class AgentApp:
     async def hangup(self):
         if self.voice:
             self.voice.closed.set()
-        task = self.call_task
+        task = self.call_task or getattr(self, "contact_job_task", None)
         if task and task is not asyncio.current_task():
             task.cancel()
             with suppress(asyncio.CancelledError, Exception):
@@ -290,6 +319,79 @@ class AgentApp:
                 )
                 or "Kutilayotgan eslatma yo'q."
             )
+            return
+        if command == "/contacts":
+            await self.send_text(
+                "\n".join(
+                    f"{row['name']} — {row['reference']}" for row in self.store.list_contacts()
+                )
+                or "Kontaktlar yo'q. Telegram orqali kontaktni menga ulashing yoki @username bering."
+            )
+            return
+        if command == "/calls":
+            await self.send_text(
+                "\n".join(
+                    f"#{row['id']} {row['target']} — {row['state']}: {row['result'] or row['message']}"
+                    for row in self.store.list_contact_calls()
+                )
+                or "Qo'ng'iroq topshiriqlari yo'q."
+            )
+            return
+        if command in {"/callto", "/cancelcall"}:
+            try:
+                arguments = text[len(command) :].strip()
+                if command == "/callto":
+                    target, separator, message = arguments.partition("|")
+                    if not separator:
+                        raise ValueError(
+                            "Misol: /callto @username | Bugun soat 18:00 da uchrashamiz."
+                        )
+                    result = self.store.queue_contact_call(target, message)
+                    await self.send_text(
+                        f"Qo'ng'iroq #{result['id']} navbatga qo'yildi: "
+                        f"{result['target']}\nAytiladi: {result['message']}\n"
+                        "Faol suhbat tugagach bajariladi. /calls — holat."
+                    )
+                else:
+                    job_id = int(arguments)
+                    result = self.store.cancel_contact_call(job_id)
+                    if (
+                        not result["cancelled"]
+                        and job_id == self.contact_job_id
+                        and self.contact_job_task
+                    ):
+                        self.contact_job_task.cancel()
+                        await asyncio.gather(self.contact_job_task, return_exceptions=True)
+                        result["cancelled"] = True
+                    await self.send_text(
+                        "Navbatdagi qo'ng'iroq bekor qilindi."
+                        if result["cancelled"]
+                        else "Kutilayotgan ID topilmadi. Faol qo'ng'iroq uchun /hangup."
+                    )
+            except ValueError as exc:
+                await self.send_text(str(exc))
+            return
+        contact = getattr(event.message, "contact", None)
+        if contact:
+            from .setup_inputs import international_phone
+
+            try:
+                number = contact.phone_number
+                if not number.startswith("+"):
+                    if len(number) < 10:
+                        raise ValueError(
+                            "Kontakt raqamida mamlakat kodi yetishmayapti. To'liq +raqam yoki @username bering."
+                        )
+                    number = "+" + number
+                number = international_phone(number)
+                name = " ".join(filter(None, [contact.first_name, contact.last_name]))
+                self.store.save_contact(name or number, number)
+                await self.send_text(
+                    f"Kontakt saqlandi: {name or number}. "
+                    "Endi unga qanday gapni yetkazishni ayting."
+                )
+            except ValueError as exc:
+                await self.send_text(str(exc))
             return
         if self.message_lock.locked():
             await self.send_text("Oldingi xabaringizni ko'rib chiqyapman. Birozdan keyin yuboring.")

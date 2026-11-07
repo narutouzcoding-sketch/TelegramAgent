@@ -5,6 +5,8 @@ from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
+from .setup_inputs import telegram_credentials
+
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -33,9 +35,12 @@ class Settings:
             raise ValueError(
                 "Avval setup.ps1 ni ishga tushiring. Yetishmayapti: " + ", ".join(missing)
             )
+        api_id, api_hash = telegram_credentials(
+            os.environ["TELEGRAM_API_ID"], os.environ["TELEGRAM_API_HASH"]
+        )
         result = cls(
-            api_id=int(os.environ["TELEGRAM_API_ID"]),
-            api_hash=os.environ["TELEGRAM_API_HASH"].strip(),
+            api_id=api_id,
+            api_hash=api_hash,
             owner_id=int(os.environ["OWNER_TELEGRAM_ID"]),
             openai_key=os.environ["OPENAI_API_KEY"].strip(),
             timezone=os.getenv("TIMEZONE", "Asia/Tashkent"),

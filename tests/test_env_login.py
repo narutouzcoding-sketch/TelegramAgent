@@ -1,0 +1,46 @@
+from unittest.mock import AsyncMock, Mock
+
+import pytest
+from dotenv import dotenv_values
+from telethon.errors import ApiIdInvalidError
+from telethon.tl.types import User
+
+from telegram_agent import __main__ as cli
+
+
+def prepare(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli, "ROOT", tmp_path)
+    (tmp_path / ".env").write_text(
+        "TELEGRAM_API_ID=12345678\nTELEGRAM_API_HASH=" + "a" * 32 + "\n"
+        "TELEGRAM_PHONE=+998901234567\nOWNER_TELEGRAM_USERNAME=@owner\n",
+        encoding="utf-8",
+    )
+    client = Mock()
+    client.start = AsyncMock()
+    client.get_me = AsyncMock(return_value=User(id=1, first_name="Assistant"))
+    client.get_entity = AsyncMock(return_value=User(id=42, first_name="Owner"))
+    client.disconnect = AsyncMock()
+    monkeypatch.setattr("telethon.TelegramClient", Mock(return_value=client))
+    return client
+
+
+async def test_manual_env_login_does_not_prompt_for_keys(monkeypatch, tmp_path):
+    client = prepare(monkeypatch, tmp_path)
+    prompt = Mock(return_value="HA")
+    monkeypatch.setattr("builtins.input", prompt)
+    monkeypatch.setattr("getpass.getpass", Mock(side_effect=AssertionError("No credential prompt")))
+    await cli.setup(from_env=True)
+    assert client.start.call_args.kwargs["phone"] == "+998901234567"
+    assert prompt.call_count == 1
+    assert "HA" in prompt.call_args.args[0]
+    assert dotenv_values(tmp_path / ".env")["OWNER_TELEGRAM_ID"] == "42"
+    client.disconnect.assert_awaited_once()
+
+
+async def test_invalid_application_error_explains_pair_without_leaking_hash(monkeypatch, tmp_path):
+    client = prepare(monkeypatch, tmp_path)
+    client.start.side_effect = ApiIdInvalidError(request=None)
+    with pytest.raises(ValueError, match="API_ID_INVALID") as error:
+        await cli.setup(from_env=True)
+    assert "a" * 32 not in str(error.value)
+    client.disconnect.assert_awaited_once()

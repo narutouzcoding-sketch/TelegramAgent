@@ -44,6 +44,13 @@ class Store:
           CREATE TABLE IF NOT EXISTS tool_results (
             call_id TEXT PRIMARY KEY, result TEXT NOT NULL
           );
+          CREATE TABLE IF NOT EXISTS contacts (
+            id INTEGER PRIMARY KEY, name TEXT NOT NULL, reference TEXT NOT NULL UNIQUE
+          );
+          CREATE TABLE IF NOT EXISTS outbound_calls (
+            id INTEGER PRIMARY KEY, target TEXT NOT NULL, message TEXT NOT NULL,
+            state TEXT NOT NULL DEFAULT 'queued', result TEXT, created TEXT NOT NULL
+          );
         """)
 
     def add_reminder(self, title, due_at, repeat="none", mode="call"):
@@ -202,3 +209,111 @@ class Store:
 
     def close(self):
         self.db.close()
+
+    def save_contact(self, name, reference):
+        name = self._title(name)
+        if not isinstance(reference, str) or not reference.strip() or len(reference) > 200:
+            raise ValueError("Kontakt uchun @username yoki to'liq telefon raqami kerak.")
+        with self.db:
+            self.db.execute(
+                "INSERT INTO contacts(name,reference) VALUES(?,?) "
+                "ON CONFLICT(reference) DO UPDATE SET name=excluded.name",
+                (name, reference.strip()),
+            )
+        return {"saved": True, "name": name}
+
+    def list_contacts(self):
+        return [
+            dict(row) for row in self.db.execute("SELECT * FROM contacts ORDER BY name LIMIT 200")
+        ]
+
+    def queue_contact_call(self, target, message):
+        if not isinstance(target, str) or not target.strip() or len(target) > 200:
+            raise ValueError("Aniq kontakt ismi, @username yoki +mamlakat_kodi bilan raqam kerak.")
+        if not isinstance(message, str) or not message.strip() or len(message) > 1500:
+            raise ValueError("Yetkaziladigan gap 1..1500 belgidan iborat bo'lishi kerak.")
+        existing = self.db.execute(
+            "SELECT id,state FROM outbound_calls WHERE target=? AND message=? "
+            "AND state IN ('queued','running') ORDER BY id LIMIT 1",
+            (target.strip(), message.strip()),
+        ).fetchone()
+        if existing:
+            return {
+                "queued": True,
+                "id": existing["id"],
+                "target": target.strip(),
+                "message": message.strip(),
+                "status": existing["state"],
+                "duplicate_suppressed": True,
+                "note": "Bu topshiriq allaqachon navbatda yoki bajarilmoqda; takrorlanmadi.",
+            }
+        if (
+            self.db.execute("SELECT COUNT(*) FROM outbound_calls WHERE state='queued'").fetchone()[
+                0
+            ]
+            >= 10
+        ):
+            raise ValueError("Navbatda 10 ta topshiriq bor. Avval ularning yakunlanishini kuting.")
+        with self.db:
+            cursor = self.db.execute(
+                "INSERT INTO outbound_calls(target,message,created) VALUES(?,?,?)",
+                (target.strip(), message.strip(), utc_now().isoformat()),
+            )
+        return {
+            "queued": True,
+            "id": cursor.lastrowid,
+            "target": target.strip(),
+            "message": message.strip(),
+            "status": "queued",
+            "channel": "telegram",
+            "note": "Siz bilan faol qo'ng'iroq tugagach bajariladi. Hali yetkazilmadi.",
+        }
+
+    def list_contact_calls(self):
+        return [
+            dict(row)
+            for row in self.db.execute("SELECT * FROM outbound_calls ORDER BY id DESC LIMIT 20")
+        ]
+
+    def cancel_contact_call(self, job_id):
+        with self.db:
+            changed = self.db.execute(
+                "UPDATE outbound_calls SET state='cancelled' WHERE id=? AND state='queued'",
+                (job_id,),
+            ).rowcount
+        return {
+            "cancelled": bool(changed),
+            "id": job_id,
+            "note": "Faol qo'ng'iroqni /hangup bilan to'xtating.",
+        }
+
+    def claim_contact_call(self):
+        with self.db:
+            row = self.db.execute(
+                "SELECT * FROM outbound_calls WHERE state='queued' ORDER BY id LIMIT 1"
+            ).fetchone()
+            if row:
+                self.db.execute(
+                    "UPDATE outbound_calls SET state='running' WHERE id=?", (row["id"],)
+                )
+        return dict(row) if row else None
+
+    def finish_contact_call(self, job_id, state, result):
+        if state not in {"sent", "failed", "cancelled", "interrupted"}:
+            raise ValueError("Noto'g'ri qo'ng'iroq holati")
+        with self.db:
+            self.db.execute(
+                "UPDATE outbound_calls SET state=?,result=? WHERE id=?",
+                (state, result[:200], job_id),
+            )
+
+    def recover_contact_calls(self):
+        # Do not repeat a call that might already have reached a third party.
+        with self.db:
+            self.db.execute(
+                "UPDATE outbound_calls SET state='interrupted',result='Agent qayta ishga tushdi; qayta terilmadi.' WHERE state='running'"
+            )
+            self.db.execute(
+                "UPDATE outbound_calls SET state='cancelled',result='Topshiriq 10 daqiqadan ortiq eskirgan.' WHERE state='queued' AND created<?",
+                ((utc_now() - timedelta(minutes=10)).isoformat(),),
+            )
