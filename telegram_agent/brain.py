@@ -103,6 +103,14 @@ class Brain:
         if self.gemini:
             await self.gemini.close()
 
+    @property
+    def contact_calls_available(self):
+        return (
+            self.settings.enable_voice_calls
+            and self.settings.enable_contact_calls
+            and bool(self.settings.allowed_call_user_ids)
+        )
+
     def instructions(self):
         now = datetime.now(ZoneInfo(self.settings.timezone)).isoformat()
         return (
@@ -120,6 +128,10 @@ class Brain:
             "Recipients hear the fixed message and cannot control tools or have a free AI chat. "
             "No live web search; do not claim to check current facts. Calls/reminders require an "
             "awake computer and internet. Never request API secrets, login codes or passwords. "
+            f"Voice calls enabled: {self.settings.enable_voice_calls}. "
+            f"Contact calls available: {self.contact_calls_available}. "
+            "When voice calls are disabled, save reminders with mode=message and explain "
+            "that they arrive as text; never promise a call. Do not offer disabled contact calls. "
             f"Current local time: {now}. Timezone: {self.settings.timezone}."
         )
 
@@ -129,6 +141,10 @@ class Brain:
             return cached
         try:
             args = json.loads(arguments) if isinstance(arguments, str) else arguments
+            if name == "queue_contact_call" and not self.contact_calls_available:
+                raise ValueError(
+                    "Boshqa kontaktlarga qo'ng'iroq hozir o'chirilgan. Avval faqat egasi bilan sinov. Keyinchalik ENABLE_CONTACT_CALLS va ruxsat berilgan kontaktlar sozlanadi."
+                )
             actions = {
                 "create_reminder": self.store.add_reminder,
                 "list_reminders": self.store.list_reminders,

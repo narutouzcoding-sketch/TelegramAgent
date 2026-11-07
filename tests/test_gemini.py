@@ -119,7 +119,13 @@ async def test_gemini_only_mode_rejects_live_call_before_dialling(brain):
     from telegram_agent.app import AgentApp
 
     app = AgentApp.__new__(AgentApp)
-    app.settings = replace(brain.settings, openai_key="", text_provider="gemini", gemini_key="test")
+    app.settings = replace(
+        brain.settings,
+        openai_key="",
+        text_provider="gemini",
+        gemini_key="test",
+        enable_voice_calls=True,
+    )
     app.calls = SimpleNamespace(play=AsyncMock())
     with pytest.raises(AIUnavailable, match="OPENAI_API_KEY"):
         await app.conversation("hello")

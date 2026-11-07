@@ -1,5 +1,6 @@
 import asyncio
 import base64
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -101,7 +102,7 @@ async def test_unauthorized_message_never_reaches_model(brain):
 
 async def test_call_failure_falls_back_to_saved_message(brain):
     app = AgentApp.__new__(AgentApp)
-    app.settings = brain.settings
+    app.settings = replace(brain.settings, enable_voice_calls=True)
     app.call_lock = asyncio.Lock()
     app.send_text = AsyncMock()
     app.place_call = AsyncMock(side_effect=TimeoutError())

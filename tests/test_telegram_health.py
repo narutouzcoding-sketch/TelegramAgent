@@ -50,6 +50,9 @@ async def test_frozen_agent_stops_before_call_library_or_message_workers_start(b
 
     app = AgentApp.__new__(AgentApp)
     app.settings = brain.settings
+    from telegram_agent.telegram_policy import TelegramPolicy
+
+    app.policy = TelegramPolicy(brain.settings, brain.store)
     app.telegram = account_client(User(id=1), {"freeze_since_date": 1735689600})
     app.telegram.is_user_authorized.return_value = True
     factory = Mock()

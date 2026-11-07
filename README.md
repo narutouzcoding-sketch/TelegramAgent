@@ -4,7 +4,38 @@ Telegram ichida yozishadigan, ovozli xabarga javob beradigan, shaxsiy qo'ng'iroq
 
 ## Hozirgi holat
 
-Kod, Python 3.12 virtual muhiti, o'rnatilgan kutubxonalar, qat'iy versiyalar yozilgan `uv.lock`, sozlash skriptlari va mahalliy testlar tayyor. Haqiqiy Telegram login va OpenAI API kaliti kiritilmaguncha agent faol emas. Jonli qo'ng'iroq va AI ovoz sifati sizning akkauntlaringiz bilan tekshirilishi kerak.
+Kod, Python 3.12 virtual muhiti, kutubxonalar, `uv.lock`, sozlash skriptlari va mahalliy testlar tayyor. Dastlab faqat egasi bilan yozishish, rejalar va matnli eslatmalar ishlaydi. Qo'ng'iroqlar standart holatda o'chirilgan. Haqiqiy Gemini generatsiyasi va reja tool chaqiruvi sinovdan o'tdi; OpenAI ovoz sinovi billing/kvota xatosi bilan tugadi. Jonli Telegram qo'ng'iroqlari hali tasdiqlanmagan.
+
+### Cheklovdan keyin boshlash
+
+Akkaunt ochilgach, eski sessiya avtorizatsiyadan chiqqan bo'lsa `login.ps1` ni bir marta bajaring, keyin `start.ps1` ni ishga tushiring. Login kodi va 2FA parolini faqat mahalliy terminalga kiriting. Asosiy akkauntingizdan `/status`, so'ng `Salom` yuboring. Dastur avtomatik boshqa odamlarga yozmaydi. Boshqaruvchi ID siga mos kelmagan xabarlar AI ga yuborilmaydi.
+
+Quyidagi mahalliy ehtiyot choralari `.env` ga qo'shiladi:
+
+```dotenv
+ENABLE_VOICE_CALLS=false
+ENABLE_CONTACT_CALLS=false
+ALLOWED_CALL_USER_IDS=
+MIN_MESSAGE_INTERVAL_SECONDS=2
+CALL_COOLDOWN_SECONDS=60
+MAX_CALLS_PER_HOUR=3
+```
+
+Matnli javob bo'laklari orasida kamida 2 soniya kutish bor. Qo'ng'iroq keyinchalik yoqilsa, urinishlar orasida kamida 60 soniya, soatiga ko'pi bilan 3 urinish bor; bu holat qayta ishga tushirganda ham bazada saqlanadi. Bular Telegram tasdiqlagan xavfsiz sonlar emas, mahalliy ehtiyot chegaralaridir. Bloklanmaslikka kafolat yo'q. Telegram norasmiy API mijozlarini kuzatishini bildiradi; faqat xabar yoki qo'ng'iroqni kutayotgan odamlarga murojaat qiling. Manbalar: [Telegram API](https://core.telegram.org/api/obtaining_api_id), [Spam FAQ](https://telegram.org/faq_spam).
+
+`FLOOD_WAIT` kelsa kutish muddati saqlanadi va agent to'xtaydi; uni erta qayta ochish yuborishni davom ettirmaydi. `PEER_FLOOD`, freeze yoki akkaunt bloklanishi xatolari ham faol ishni to'xtatadi. Avtomatik qayta terish va RPC ni cheklovdan keyin qayta yuborish o'chirilgan. Manba: [Telegram RPC errors](https://core.telegram.org/api/errors).
+
+OpenAI billing/kvotasi ishlagach, avval faqat o'zingiz bilan ovozni sinash uchun `ENABLE_VOICE_CALLS=true` qo'yiladi. Boshqalarga qo'ng'iroq keyinchalik `ENABLE_CONTACT_CALLS=true` va `ALLOWED_CALL_USER_IDS` ichida ularning Telegram raqamli ID si ko'rsatilgandagina ishlaydi. Kontakt oldindan rozilik bildirgan bo'lishi kerak; aniq topshirig'ingizsiz agent o'zi qo'ng'iroq qilmaydi. Oddiy SIM raqamiga mobil qo'ng'iroq bu loyihada mavjud emas.
+
+### Telegramsiz mahalliy sinov
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\sandbox.ps1
+# Qisqa avtomatik AI, reja, terminal eslatmasi va qo'ng'iroq oldindan ko'rish sinovi:
+powershell -NoProfile -ExecutionPolicy Bypass -File .\sandbox.ps1 -SelfTest
+```
+
+Bu rejim Telegram sessiyasini ochmaydi va haqiqiy bazaga tegmaydi. Vaqtinchalik sinov ma'lumotlari chiqishda o'chiriladi. `/demo` 3 soniyadan so'ng terminalda eslatadi. AI so'rovi tanlangan xizmat kvotasini ishlatadi. `/say MATN` yoki `-SelfTest -Speech` alohida OpenAI ovoz so'rovini yuboradi; ovoz sinovi standart holatda bajarilmaydi. Mahalliy sinov jonli Telegram ovozini isbotlamaydi.
 
 ## Nima kerak?
 
@@ -87,7 +118,7 @@ Freeze bo'lsa, yordamchi akkauntga rasmiy Telegram ilovasida kirib, **Appeal / A
 
 ## Telegramda foydalanish
 
-Yordamchi akkauntiga `/help` yozing. Matn, ovozli xabar yoki oddiy Telegram shaxsiy qo'ng'irog'idan foydalaning. `/call` yuborsangiz, agent sizga qo'ng'iroq qiladi. Javob bergach, AI bilan gaplashasiz; gapini bo'lib savol berish mumkin.
+Yordamchi akkauntiga `/help` yozing. Avval matnli suhbatni sinang. Ovozli rejim alohida yoqilgach, `/call` agentning sizga qo'ng'iroq qilishini boshlaydi. Javob bergach, AI bilan gaplashasiz; gapini bo'lib savol berish mumkin.
 
 - «Ertaga 09:00 da dars qilishimni qo'ng'iroq qilib eslat.»
 - «10 daqiqadan keyin dam olishni eslat.»

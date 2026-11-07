@@ -9,7 +9,7 @@
 - NTgCalls native DLL importi: muvaffaqiyatli.
 - 48 kHz mono PCM jonli jo'natish va qabul qilish konfiguratsiyalari: yaratildi.
 - `ruff check telegram_agent tests`: muvaffaqiyatli.
-- `python -m pytest -q -W error::RuntimeWarning`: **81 passed**, ogohlantirishsiz.
+- `python -m pytest -q -W error::RuntimeWarning`: **94 passed**, ogohlantirishsiz.
 - `uv lock --check`: muvaffaqiyatli.
 - Barcha PowerShell skriptlarining sintaksisi: tekshirildi.
 
@@ -35,7 +35,9 @@ konfiguratsiyasi va suhbat kontekstini qisqartirish saqlangan rejalarni o'chirma
 Telegram sessiyasi o'qishga yaroqli bo'lsa ham `freeze_since_date` mavjudligida login/start
 bloklanishi, oddiy `restricted` bayrog'ini freeze deb adashtirmaslik, o'chirilgan/mavjud bo'lmagan
 akkauntni ishga tushirmaslik va freeze aniqlanganda qo'ng'iroq/message worker larini yaratmaslik tekshirildi.
-Tashqi xizmatlar mock bilan almashtirilgan; pulli API so'rovi yuborilmadi.
+94 avtomatlashtirilgan testda tashqi xizmatlar mock bilan almashtirilgan. Yangi testlar vaqtinchalik sandbox bazasi haqiqiy bazani o'zgartirmasligini, terminal kiritish kutilayotganda eslatmalar ishlashini, qo'ng'iroqlar standart holatda o'chiqligini, ruxsatsiz kontakt uchun ovoz yaratilmasligini, FLOOD_WAIT muddati SQLite qayta ochilgach ham amal qilishini, cheklovdan keyin qayta so'rov bo'lmasligini, xabarlar oralig'ini, qo'ng'iroq chegaralarini va matnli rejimda native qo'ng'iroq transporti boshlanmasligini tekshiradi.
+
+Alohida haqiqiy mahalliy sinov: Gemini javobi va reja tool chaqiruvi muvaffaqiyatli, qisqa terminal eslatmasi va faqat simulyatsiyadagi qo'ng'iroq muvaffaqiyatli. Telegramga xabar yoki qo'ng'iroq yuborilmadi, ishchi baza ishlatilmadi. OpenAI qisqa ovoz generatsiyasi billing/kvota xatosi bilan rad etildi; kalit/profil aylantirilmadi. Model ro'yxatda mavjudligi generatsiya uchun billing ishlashini tasdiqlamaydi.
 
 ## Sizning akkauntingiz bilan qolgan tekshiruvlar
 
@@ -48,7 +50,7 @@ hisobotga ko'chirilmaydi. Quyidagilar mahalliy test bilan isbotlanmagan:
 4. Haqiqiy eslatmaning belgilangan vaqtda telefoningizga yetib borishi.
 5. Windows login paytida avtomatik boshlash (skript tayyor, vazifa hali o'rnatilmagan).
 6. Boshqa haqiqiy Telegram foydalanuvchisiga xabarni qo'ng'iroq bilan yetkazish.
-7. Haqiqiy Gemini API kaliti bilan generatsiya sifati, function calling va akkaunt kvotalari.
+7. Gemini bilan uzoq suhbat sifati va real foydalanishdagi kvota sarfi; bitta generatsiya va reja tool sinovi o'tgan.
 
 `README.md` dagi sozlash va ikki daqiqalik haqiqiy sinovni bajaring.
 
@@ -58,3 +60,5 @@ ammo `help.getAppConfig` akkaunt muzlatilganini bildirdi. Yangilangan `telegram-
 to'g'ri aniqlab, ishni davom ettirmadi. Xabar/qo'ng'iroq yuborilmadi, apellyatsiya topshirilmadi,
 sessiya va API kalitlari o'zgartirilmadi. Bu Telegram cheklovidan keyingi generatsiya yoki
 qo'ng'iroq funksiyalarining muvaffaqiyatli ishlaganini anglatmaydi.
+
+Foydalanuvchi apellyatsiyadan keyin akkaunt ochilganini bildirdi. Keyingi faqat o'qish tekshiruvida eski sessiya avtorizatsiyasiz bo'lib chiqdi. Bu qayta bloklanganlikni isbotlamaydi; normal mahalliy login kerak. Tiklangan akkauntdan jonli yuborish hali sinovdan o'tmagan. `.env` ga ehtiyot sozlamalari eski qiymatlarni o'zgartirmasdan qo'shildi; ovozli va kontakt qo'ng'iroqlari o'chiq.

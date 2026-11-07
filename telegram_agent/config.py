@@ -37,12 +37,22 @@ class Settings:
     max_call_seconds: int = 900
     ring_timeout_seconds: int = 35
     reminder_grace_hours: int = 24
+    enable_contact_calls: bool = False
+    enable_voice_calls: bool = False
+    allowed_call_user_ids: tuple[int, ...] = ()
+    min_message_interval_seconds: float = 2
+    call_cooldown_seconds: int = 60
+    max_calls_per_hour: int = 3
 
     @classmethod
-    def load(cls):
+    def load(cls, require_telegram=True):
         ensure_env_defaults(ROOT / ".env", ROOT / ".env.example")
         load_dotenv(ROOT / ".env", override=False)
-        required = ["TELEGRAM_API_ID", "TELEGRAM_API_HASH", "OWNER_TELEGRAM_ID"]
+        required = (
+            ["TELEGRAM_API_ID", "TELEGRAM_API_HASH", "OWNER_TELEGRAM_ID"]
+            if require_telegram
+            else []
+        )
         missing = [key for key in required if not os.getenv(key, "").strip()]
         if missing:
             raise ValueError(
@@ -50,13 +60,15 @@ class Settings:
                 + ", ".join(missing)
                 + ". OWNER_TELEGRAM_ID ni login.ps1 asosiy akkauntingizdan /pair xabari orqali topadi."
             )
-        api_id, api_hash = telegram_credentials(
-            os.environ["TELEGRAM_API_ID"], os.environ["TELEGRAM_API_HASH"]
+        api_id, api_hash = (
+            telegram_credentials(os.environ["TELEGRAM_API_ID"], os.environ["TELEGRAM_API_HASH"])
+            if require_telegram
+            else (0, "")
         )
         result = cls(
             api_id=api_id,
             api_hash=api_hash,
-            owner_id=int(os.environ["OWNER_TELEGRAM_ID"]),
+            owner_id=int(os.environ["OWNER_TELEGRAM_ID"]) if require_telegram else 0,
             openai_key=os.getenv("OPENAI_API_KEY", "").strip(),
             backup_openai_keys=tuple(
                 key.strip()
@@ -82,6 +94,17 @@ class Settings:
             max_call_seconds=int(os.getenv("MAX_CALL_SECONDS", "900")),
             ring_timeout_seconds=int(os.getenv("RING_TIMEOUT_SECONDS", "35")),
             reminder_grace_hours=int(os.getenv("REMINDER_GRACE_HOURS", "24")),
+            enable_contact_calls=os.getenv("ENABLE_CONTACT_CALLS", "false").strip().lower()
+            == "true",
+            enable_voice_calls=os.getenv("ENABLE_VOICE_CALLS", "false").strip().lower() == "true",
+            allowed_call_user_ids=tuple(
+                int(value.strip())
+                for value in os.getenv("ALLOWED_CALL_USER_IDS", "").split(",")
+                if value.strip().isdecimal()
+            ),
+            min_message_interval_seconds=float(os.getenv("MIN_MESSAGE_INTERVAL_SECONDS", "2")),
+            call_cooldown_seconds=int(os.getenv("CALL_COOLDOWN_SECONDS", "60")),
+            max_calls_per_hour=int(os.getenv("MAX_CALLS_PER_HOUR", "3")),
         )
         ZoneInfo(result.timezone)
         if result.text_provider not in {"auto", "openai", "gemini"}:
@@ -109,7 +132,7 @@ class Settings:
             )
         if not 2048 <= result.voice_context_tokens <= 16000:
             raise ValueError("VOICE_CONTEXT_TOKENS 2048..16000 bo'lishi kerak.")
-        if result.api_id <= 0 or result.owner_id <= 0:
+        if require_telegram and (result.api_id <= 0 or result.owner_id <= 0):
             raise ValueError("Telegram API ID va OWNER_TELEGRAM_ID musbat son bo'lishi kerak.")
         if not 30 <= result.max_call_seconds <= 3300:
             raise ValueError("MAX_CALL_SECONDS 30..3300 oralig'ida bo'lishi kerak.")
@@ -120,6 +143,15 @@ class Settings:
         if len(result.backup_openai_keys) > 3:
             raise ValueError(
                 "OPENAI_BACKUP_API_KEYS da ko'pi bilan 3 ta zaxira kalit bo'lishi mumkin."
+            )
+        if not 0.5 <= result.min_message_interval_seconds <= 60:
+            raise ValueError("MIN_MESSAGE_INTERVAL_SECONDS 0.5..60 oralig'ida bo'lishi kerak.")
+        if (
+            not 10 <= result.call_cooldown_seconds <= 3600
+            or not 1 <= result.max_calls_per_hour <= 20
+        ):
+            raise ValueError(
+                "CALL_COOLDOWN_SECONDS 10..3600, MAX_CALLS_PER_HOUR 1..20 oralig'ida bo'lishi kerak."
             )
         return result
 

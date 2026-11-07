@@ -75,7 +75,13 @@ async def setup(from_env=False):
 
         saved_phone = international_phone(saved_phone)
     (ROOT / "data").mkdir(exist_ok=True)
-    client = TelegramClient(str(ROOT / "data" / "assistant"), api_id, api_hash)
+    client = TelegramClient(
+        str(ROOT / "data" / "assistant"),
+        api_id,
+        api_hash,
+        request_retries=0,
+        flood_sleep_threshold=0,
+    )
     try:
         await client.start(
             phone=saved_phone or prompt_phone,
@@ -148,7 +154,11 @@ async def doctor(online=False):
 
         # Validate Telegram first: a readable frozen session must not be reported as healthy.
         client = TelegramClient(
-            str(ROOT / "data" / "assistant"), settings.api_id, settings.api_hash
+            str(ROOT / "data" / "assistant"),
+            settings.api_id,
+            settings.api_hash,
+            request_retries=0,
+            flood_sleep_threshold=0,
         )
         try:
             await client.connect()
@@ -197,7 +207,13 @@ async def telegram_status():
     api_id, api_hash = telegram_credentials(
         existing.get("TELEGRAM_API_ID"), existing.get("TELEGRAM_API_HASH")
     )
-    client = TelegramClient(str(ROOT / "data" / "assistant"), api_id, api_hash)
+    client = TelegramClient(
+        str(ROOT / "data" / "assistant"),
+        api_id,
+        api_hash,
+        request_retries=0,
+        flood_sleep_threshold=0,
+    )
     try:
         await client.connect()
         me = await ensure_telegram_account(client, existing.get("TIMEZONE") or "Asia/Tashkent")
@@ -214,7 +230,8 @@ async def telegram_status():
 def main():
     parser = argparse.ArgumentParser(description="Shaxsiy Telegram AI yordamchi")
     parser.add_argument(
-        "command", choices=["configure", "setup", "login", "doctor", "telegram-status", "run"]
+        "command",
+        choices=["configure", "setup", "login", "doctor", "telegram-status", "sandbox", "run"],
     )
     parser.add_argument(
         "--economy",
@@ -222,9 +239,22 @@ def main():
         help="configure: oldingi standart Realtime modelini Mini ga almashtirish",
     )
     parser.add_argument("--online", action="store_true", help="doctor: tashqi API larni tekshirish")
+    parser.add_argument(
+        "--self-test", action="store_true", help="sandbox: qisqa haqiqiy AI va eslatma sinovi"
+    )
+    parser.add_argument(
+        "--speech", action="store_true", help="sandbox --self-test: ovoz generatsiyasini ham sinash"
+    )
     args = parser.parse_args()
     try:
-        if args.command == "configure":
+        if args.command == "sandbox":
+            from .sandbox import console, self_test
+
+            settings = Settings.load(require_telegram=False)
+            if args.self_test:
+                return 0 if asyncio.run(self_test(settings, speech=args.speech)) else 1
+            asyncio.run(console(settings))
+        elif args.command == "configure":
             path = ROOT / ".env"
             added = ensure_env_defaults(path, ROOT / ".env.example")
             print("Qo'shilgan sozlama nomlari: " + (", ".join(added) or "yangi sozlama yo'q"))

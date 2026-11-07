@@ -2,6 +2,7 @@ import asyncio
 import json
 import shutil
 import wave
+from dataclasses import replace
 from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -12,9 +13,16 @@ from telethon.tl.types import Chat, User
 from telegram_agent.app import AgentApp
 from telegram_agent.contact_calls import RecipientResolver, decode_pcm, play_relay
 from telegram_agent.store import utc_now
+from telegram_agent.telegram_policy import TelegramPolicy
 
 
 def test_contact_call_tool_queues_once_and_never_claims_delivery(brain):
+    brain.settings = replace(
+        brain.settings,
+        enable_voice_calls=True,
+        enable_contact_calls=True,
+        allowed_call_user_ids=(77,),
+    )
     arguments = json.dumps({"target": "@friend", "message": "Soat 18 da uchrashamiz."})
     first = brain.execute_tool("queue_contact_call", arguments, "relay-1")
     assert brain.execute_tool("queue_contact_call", arguments, "relay-1") == first
@@ -83,11 +91,18 @@ async def test_bots_groups_and_assistant_account_cannot_be_recipients(store, ent
 
 
 async def test_relay_only_sends_after_answer_and_does_not_record_recipient(brain):
+    brain.settings = replace(
+        brain.settings,
+        enable_voice_calls=True,
+        enable_contact_calls=True,
+        allowed_call_user_ids=(77,),
+    )
     calls = SimpleNamespace(play=AsyncMock(), send_frame=AsyncMock(), leave_call=AsyncMock())
     app = SimpleNamespace(
         call_lock=asyncio.Lock(),
         calls=calls,
         settings=brain.settings,
+        policy=TelegramPolicy(brain.settings, brain.store),
         call_task=None,
         relay_target=None,
         relay_ended=None,
@@ -101,11 +116,18 @@ async def test_relay_only_sends_after_answer_and_does_not_record_recipient(brain
 
 
 async def test_recipient_hangup_is_not_marked_as_complete_message(brain):
+    brain.settings = replace(
+        brain.settings,
+        enable_voice_calls=True,
+        enable_contact_calls=True,
+        allowed_call_user_ids=(77,),
+    )
     calls = SimpleNamespace(play=AsyncMock(), send_frame=AsyncMock(), leave_call=AsyncMock())
     app = SimpleNamespace(
         call_lock=asyncio.Lock(),
         calls=calls,
         settings=brain.settings,
+        policy=TelegramPolicy(brain.settings, brain.store),
         call_task=None,
         relay_target=None,
         relay_ended=None,
@@ -135,7 +157,12 @@ async def test_real_ffmpeg_converts_local_audio_to_telegram_pcm(tmp_path):
 
 async def test_explicit_call_command_is_restricted_to_owner(brain):
     app = AgentApp.__new__(AgentApp)
-    app.settings = brain.settings
+    app.settings = replace(
+        brain.settings,
+        enable_voice_calls=True,
+        enable_contact_calls=True,
+        allowed_call_user_ids=(77,),
+    )
     app.store = brain.store
     app.send_text = AsyncMock()
     event = SimpleNamespace(

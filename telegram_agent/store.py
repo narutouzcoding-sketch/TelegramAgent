@@ -51,6 +51,10 @@ class Store:
             id INTEGER PRIMARY KEY, target TEXT NOT NULL, message TEXT NOT NULL,
             state TEXT NOT NULL DEFAULT 'queued', result TEXT, created TEXT NOT NULL
           );
+          CREATE TABLE IF NOT EXISTS telegram_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+          CREATE TABLE IF NOT EXISTS call_attempts (
+            id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, created TEXT NOT NULL
+          );
         """)
 
     def add_reminder(self, title, due_at, repeat="none", mode="call"):
@@ -223,6 +227,33 @@ class Store:
 
     def close(self):
         self.db.close()
+
+    def telegram_state(self, key):
+        row = self.db.execute("SELECT value FROM telegram_state WHERE key=?", (key,)).fetchone()
+        return row[0] if row else None
+
+    def set_telegram_state(self, key, value):
+        with self.db:
+            self.db.execute("INSERT OR REPLACE INTO telegram_state VALUES(?,?)", (key, value))
+
+    def reserve_call(self, user_id, cooldown_seconds=60, max_per_hour=3, now=None):
+        now = now or utc_now()
+        with self.db:
+            row = self.db.execute(
+                "SELECT created FROM call_attempts ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            if row and now - datetime.fromisoformat(row[0]) < timedelta(seconds=cooldown_seconds):
+                return False
+            count = self.db.execute(
+                "SELECT COUNT(*) FROM call_attempts WHERE created>?",
+                ((now - timedelta(hours=1)).isoformat(),),
+            ).fetchone()[0]
+            if count >= max_per_hour:
+                return False
+            self.db.execute(
+                "INSERT INTO call_attempts(user_id,created) VALUES(?,?)", (user_id, now.isoformat())
+            )
+        return True
 
     def save_contact(self, name, reference):
         name = self._title(name)

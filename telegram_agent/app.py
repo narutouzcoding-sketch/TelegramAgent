@@ -16,6 +16,7 @@ from .owner_setup import configured_owner
 from .scheduler import Scheduler
 from .store import Store
 from .telegram_health import ensure_telegram_account
+from .telegram_policy import TelegramPaused, TelegramPolicy
 
 log = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ Misol: «Ertaga 09:00 da dars qilishimni qo'ng'iroq qilib eslat.»
 «Har kuni 20:30 da ingliz tilini o'rganishni eslat.»
 «Rejamga kitob o'qishni qo'sh.»
 
-Ovoz AI tomonidan yaratiladi. Suhbatning so'nggi matnlari shu kompyuterda saqlanadi; ovoz va matn OpenAI API ga yuboriladi.
+Ovoz AI tomonidan yaratiladi. Suhbatning so'nggi matnlari shu kompyuterda saqlanadi; matn tanlangan Gemini/OpenAI xizmatiga, ovoz OpenAI xizmatiga yuboriladi.
 Eslatish uchun dastur, kompyuter va internet ishlashi kerak."""
 
 
@@ -50,8 +51,13 @@ class AgentApp:
         (ROOT / "data").mkdir(exist_ok=True)
         self.store = Store(ROOT / "data" / "agent.sqlite3", settings.timezone)
         self.brain = Brain(settings, self.store)
+        self.policy = TelegramPolicy(settings, self.store)
         self.telegram = TelegramClient(
-            str(ROOT / "data" / "assistant"), settings.api_id, settings.api_hash
+            str(ROOT / "data" / "assistant"),
+            settings.api_id,
+            settings.api_hash,
+            request_retries=0,
+            flood_sleep_threshold=0,
         )
         self.calls = None
         self.voice = None
@@ -72,12 +78,14 @@ class AgentApp:
     async def send_text(self, text):
         # Plain text prevents model-generated Markdown links from changing message meaning.
         for start in range(0, len(text), 3500):
-            await self.telegram.send_message(
-                self.owner, text[start : start + 3500], parse_mode=None
+            chunk = text[start : start + 3500]
+            await self.policy.send(
+                lambda: self.telegram.send_message(self.owner, chunk, parse_mode=None)
             )
 
     async def run(self):
         try:
+            self.policy.ensure_active()
             await self._run()
         finally:
             await self.telegram.disconnect()
@@ -85,16 +93,16 @@ class AgentApp:
             self.store.close()
 
     async def _run(self):
-        # Import inside the running loop: PyTgCalls captures this loop in its sync wrappers.
-        from pytgcalls import PyTgCalls, filters
-        from pytgcalls.types import ChatUpdate, Device, Direction
-
         await self.telegram.connect()
-        me = await ensure_telegram_account(self.telegram, self.settings.timezone)
+        me = await self.policy.action(
+            lambda: ensure_telegram_account(self.telegram, self.settings.timezone)
+        )
         if me.bot or me.id == self.settings.owner_id:
             raise ValueError("Yordamchi uchun siznikidan boshqa, oddiy Telegram akkaunti kerak.")
-        owner_user = await configured_owner(
-            self.telegram, me.id, self.settings.owner_username, str(self.settings.owner_id)
+        owner_user = await self.policy.action(
+            lambda: configured_owner(
+                self.telegram, me.id, self.settings.owner_username, str(self.settings.owner_id)
+            )
         )
         if owner_user is None or owner_user.id != self.settings.owner_id:
             raise ValueError(
@@ -102,25 +110,79 @@ class AgentApp:
             )
         self.owner = await self.telegram.get_input_entity(owner_user)
         self.owner_name = owner_user.first_name or "foydalanuvchi"
-        from .contact_calls import RecipientResolver, run_queue
+        from .contact_calls import run_queue
 
-        self.recipient_resolver = RecipientResolver(self.telegram, self.store, me.id)
-        self.calls = PyTgCalls(self.telegram)
         self.telegram.add_event_handler(self.on_message, events.NewMessage(incoming=True))
+
+        try:
+            if self.settings.enable_voice_calls:
+                await self._start_call_transport(me.id)
+            scheduler = Scheduler(self.store, self.deliver, self.settings.reminder_grace_hours)
+            self.scheduler_task = asyncio.create_task(scheduler.run())
+            if (
+                self.settings.enable_voice_calls
+                and self.settings.enable_contact_calls
+                and self.settings.allowed_call_user_ids
+            ):
+                self.contact_queue_task = asyncio.create_task(run_queue(self))
+            log.info("Agent started; owner allowlist active")
+            print(
+                "TelegramAgent ishlayapti. "
+                + (
+                    "Ovozli rejim yoqilgan."
+                    if self.settings.enable_voice_calls
+                    else "Hozir faqat egasi bilan matnli rejim; qo'ng'iroqlar o'chirilgan."
+                ),
+                flush=True,
+            )
+            # A scheduler crash must not silently disable reminders while chat still works.
+            disconnected = asyncio.ensure_future(self.telegram.disconnected)
+            restricted = asyncio.create_task(self.policy.stopped.wait())
+            done, _ = await asyncio.wait(
+                [
+                    task
+                    for task in [
+                        self.scheduler_task,
+                        self.contact_queue_task,
+                        disconnected,
+                        restricted,
+                    ]
+                    if task is not None
+                ],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in done:
+                task.result()
+            if restricted in done:
+                raise TelegramPaused(self.policy.reason)
+        finally:
+            workers = [
+                task for task in [self.scheduler_task, self.contact_queue_task] if task is not None
+            ]
+            if "restricted" in locals():
+                workers.append(restricted)
+            for worker in workers:
+                worker.cancel()
+            await asyncio.gather(*workers, return_exceptions=True)
+            await self.hangup()
+            for task in list(self.background_tasks):
+                task.cancel()
+            await asyncio.gather(*self.background_tasks, return_exceptions=True)
+
+    async def _start_call_transport(self, own_id):
+        from pytgcalls import PyTgCalls, filters
+        from pytgcalls.types import ChatUpdate, Device, Direction
+
+        from .contact_calls import RecipientResolver
+
+        self.recipient_resolver = RecipientResolver(self.telegram, self.store, own_id)
+        self.calls = PyTgCalls(self.telegram)
 
         @self.calls.on_update(filters.chat_update(ChatUpdate.Status.INCOMING_CALL))
         async def incoming(_, update):
-            if update.chat_id != self.settings.owner_id:
-                # Reject callers outside the configured owner's account.
+            if update.chat_id != self.settings.owner_id or self.call_lock.locked():
                 with suppress(Exception):
                     await self.calls.leave_call(update.chat_id)
-                return
-            if self.call_lock.locked():
-                with suppress(Exception):
-                    await self.calls.leave_call(update.chat_id)
-                await self.send_text(
-                    "Boshqa qo'ng'iroq faol. /hangup bilan uni to'xtatishingiz mumkin."
-                )
                 return
             self.spawn(self.safe_call("Salom! Men AI yordamchingizman. Suhbatni boshlang."))
 
@@ -137,35 +199,7 @@ class AgentApp:
                 for frame in update.frames:
                     self.voice.accept_pcm48(frame.frame)
 
-        try:
-            await self.calls.start()
-            scheduler = Scheduler(self.store, self.deliver, self.settings.reminder_grace_hours)
-            self.scheduler_task = asyncio.create_task(scheduler.run())
-            self.contact_queue_task = asyncio.create_task(run_queue(self))
-            log.info("Agent started; owner allowlist active")
-            print(
-                "TelegramAgent ishlayapti. Yordamchi akkauntiga yozing yoki qo'ng'iroq qiling.",
-                flush=True,
-            )
-            # A scheduler crash must not silently disable reminders while chat still works.
-            disconnected = asyncio.ensure_future(self.telegram.disconnected)
-            done, _ = await asyncio.wait(
-                [self.scheduler_task, self.contact_queue_task, disconnected],
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            for task in done:
-                task.result()
-        finally:
-            for worker in [self.scheduler_task, self.contact_queue_task]:
-                if not worker:
-                    continue
-                worker.cancel()
-                with suppress(asyncio.CancelledError):
-                    await worker
-            await self.hangup()
-            for task in list(self.background_tasks):
-                task.cancel()
-            await asyncio.gather(*self.background_tasks, return_exceptions=True)
+        await self.calls.start()
 
     def spawn(self, coroutine):
         task = asyncio.create_task(coroutine)
@@ -201,6 +235,8 @@ class AgentApp:
                 (
                     public_ai_error(exc)
                     if isinstance(exc, (APIError, AIUnavailable))
+                    else str(exc)
+                    if isinstance(exc, TelegramPaused)
                     else "Qo'ng'iroq ulanmagan yoki ovozli xizmatda xato bo'ldi. "
                 )
                 + " "
@@ -211,6 +247,10 @@ class AgentApp:
                 ready.set_exception(ConnectionError("Call ended before connection"))
 
     async def conversation(self, introduction, ready=None):
+        if not self.settings.enable_voice_calls:
+            raise TelegramPaused(
+                "Ovozli qo'ng'iroqlar hozir o'chirilgan. Avval matnli sinov va AI billing tekshiruvi yakunlanadi."
+            )
         if not self.settings.openai_key:
             raise AIUnavailable(
                 "Jonli ovozli qo'ng'iroq uchun OPENAI_API_KEY kerak. Gemini matnli suhbat va rejalarga ulangan."
@@ -233,12 +273,17 @@ class AgentApp:
             try:
                 # play() returns when the peer has answered and media is connected.
                 async with asyncio.timeout(self.settings.ring_timeout_seconds + 45):
-                    await self.calls.play(
+                    await self.policy.dial(
                         self.settings.owner_id,
-                        MediaStream(
-                            ExternalMedia.AUDIO, parameters, video_flags=MediaStream.Flags.IGNORE
+                        lambda: self.calls.play(
+                            self.settings.owner_id,
+                            MediaStream(
+                                ExternalMedia.AUDIO,
+                                parameters,
+                                video_flags=MediaStream.Flags.IGNORE,
+                            ),
+                            config=CallConfig(timeout=self.settings.ring_timeout_seconds),
                         ),
-                        config=CallConfig(timeout=self.settings.ring_timeout_seconds),
                     )
                     self.voice = voice
                     await self.calls.record(self.settings.owner_id, RecordStream(True, parameters))
@@ -277,7 +322,12 @@ class AgentApp:
             text += "\nDastur ishlamay turgani sabab bu eslatma kechikdi."
         # A durable chat copy is useful even when the owner answers the call.
         await self.send_text(text)
-        if row["mode"] == "call" and not late and not self.call_lock.locked():
+        if (
+            self.settings.enable_voice_calls
+            and row["mode"] == "call"
+            and not late
+            and not self.call_lock.locked()
+        ):
             try:
                 return await self.place_call(
                     "O'zingizni AI yordamchi deb tanishtiring va mana bu eslatmani "
@@ -304,13 +354,25 @@ class AgentApp:
             await self.send_text("Qo'ng'iroq tugatildi.")
             return
         if command == "/call":
+            if not self.settings.enable_voice_calls:
+                await self.send_text(
+                    "Ovozli qo'ng'iroqlar hozir o'chirilgan. Matnli suhbat, rejalar va eslatmalar ishlaydi."
+                )
+                return
             if self.call_lock.locked():
                 await self.send_text("Qo'ng'iroq allaqachon faol.")
             else:
                 self.spawn(self.safe_call("Salom! Men AI yordamchingizman. Qanday yordam beray?"))
             return
         if command in {"/help", "/start"}:
-            await self.send_text(HELP)
+            await self.send_text(
+                (
+                    "Hozir qo'ng'iroqlar o'chirilgan; eslatmalar matn bilan yuboriladi.\n\n"
+                    if not self.settings.enable_voice_calls
+                    else ""
+                )
+                + HELP
+            )
             return
         if command == "/status":
             await self.send_text(
@@ -318,7 +380,9 @@ class AgentApp:
                 f"Qo'ng'iroq: {'faol' if self.call_lock.locked() else 'bo‘sh'}. "
                 f"Eslatmalar: {len(self.store.list_reminders())}. "
                 f"Rejalar: {len(self.store.list_plans())}. "
-                f"Matn AI: {self.settings.resolved_text_provider}."
+                f"Matn AI: {self.settings.resolved_text_provider}. "
+                f"Ovozli qo'ng'iroq: {'yoqilgan' if self.settings.enable_voice_calls else 'o‘chirilgan'}. "
+                f"Kontaktlarga qo'ng'iroq: {'yoqilgan' if self.settings.enable_contact_calls else 'o‘chirilgan'}."
             )
             return
         if command == "/plans":
@@ -359,6 +423,14 @@ class AgentApp:
             try:
                 arguments = text[len(command) :].strip()
                 if command == "/callto":
+                    if (
+                        not self.settings.enable_voice_calls
+                        or not self.settings.enable_contact_calls
+                        or not self.settings.allowed_call_user_ids
+                    ):
+                        raise ValueError(
+                            "Kontaktlarga qo'ng'iroq hozir o'chirilgan. Avval faqat egasi bilan sinov qilinadi."
+                        )
                     target, separator, message = arguments.partition("|")
                     if not separator:
                         raise ValueError(
@@ -422,7 +494,11 @@ class AgentApp:
                         return
                     with tempfile.TemporaryDirectory(dir=ROOT / "data", prefix="voice-") as folder:
                         path = Path(
-                            await event.message.download_media(file=str(Path(folder) / "in.ogg"))
+                            await self.policy.action(
+                                lambda: event.message.download_media(
+                                    file=str(Path(folder) / "in.ogg")
+                                )
+                            )
                         )
                         text = await self.brain.transcribe(path)
                         if not text.strip():
@@ -434,7 +510,9 @@ class AgentApp:
                         try:
                             out = Path(folder) / "reply.ogg"
                             await self.brain.speech(reply, out)
-                            await self.telegram.send_file(self.owner, out, voice_note=True)
+                            await self.policy.send(
+                                lambda: self.telegram.send_file(self.owner, out, voice_note=True)
+                            )
                         except Exception as exc:
                             log.info("Voice note synthesis failed type=%s", type(exc).__name__)
                 elif text:

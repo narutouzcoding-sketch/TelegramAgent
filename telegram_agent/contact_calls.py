@@ -113,14 +113,17 @@ async def play_relay(app, user, audio):
         app.relay_ended = asyncio.Event()
         try:
             async with asyncio.timeout(app.settings.ring_timeout_seconds + 45):
-                await app.calls.play(
+                await app.policy.dial(
                     user.id,
-                    MediaStream(
-                        ExternalMedia.AUDIO,
-                        AudioParameters(bitrate=48000, channels=1),
-                        video_flags=MediaStream.Flags.IGNORE,
+                    lambda: app.calls.play(
+                        user.id,
+                        MediaStream(
+                            ExternalMedia.AUDIO,
+                            AudioParameters(bitrate=48000, channels=1),
+                            video_flags=MediaStream.Flags.IGNORE,
+                        ),
+                        config=CallConfig(timeout=app.settings.ring_timeout_seconds),
                     ),
-                    config=CallConfig(timeout=app.settings.ring_timeout_seconds),
                 )
             # Feed only after answer. No recipient audio is recorded or given to the model.
             loop = asyncio.get_running_loop()
@@ -150,7 +153,17 @@ async def play_relay(app, user, audio):
 
 async def execute_job(app, job):
     try:
-        user = await app.recipient_resolver.resolve(job["target"])
+        if (
+            not app.settings.enable_voice_calls
+            or not app.settings.enable_contact_calls
+            or not app.settings.allowed_call_user_ids
+        ):
+            raise ValueError("Kontakt qo'ng'iroqlari o'chirilgan; telefon terilmadi.")
+        user = await app.policy.action(lambda: app.recipient_resolver.resolve(job["target"]))
+        if user.id not in app.settings.allowed_call_user_ids:
+            raise ValueError(
+                "Bu foydalanuvchi ruxsat berilgan kontaktlar ro'yxatida yo'q; telefon terilmadi."
+            )
         await app.send_text(f"Qo'ng'iroq #{job['id']}: {job['target']} uchun xabar tayyorlanyapti.")
         text = (
             f"Assalomu alaykum. Men {app.owner_name}ning AI yordamchisiman. "
