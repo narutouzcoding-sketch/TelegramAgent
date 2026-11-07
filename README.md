@@ -73,6 +73,18 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\start.ps1
 
 `check.ps1 -Online` Telegram sessiyasini va model nomlarining API orqali mavjudligini tekshiradi; model javob generatsiyasi yoki qo'ng'iroqni sinamaydi. `start.ps1` ochiq tursin. `Ctrl+C` agentni to'xtatadi. Skriptlar PowerShell execution policy ni kompyuter bo'yicha o'zgartirmaydi; `Bypass` faqat ushbu jarayon uchun ishlatiladi.
 
+### Telegramda `Deleted Account` yoki qor parchasi belgisi ko'rinsa
+
+Login muvaffaqiyatli bo'lishi akkaunt yozisha olishini tasdiqlamaydi. Telegram **frozen** akkauntlarga sessiya orqali o'qishga ruxsat berishi mumkin; `User.deleted=false` va `User.restricted=false` ham freeze yo'qligini kafolatlamaydi. Dastur endi `help.getAppConfig` dagi `freeze_since_date` ni login, online tekshiruv va ishga tushishdan oldin tekshiradi. Muzlatilgan akkauntda ish boshlamaydi va server ko'rsatgan o'chirish muddatini mahalliy vaqt bilan ko'rsatadi.
+
+Agent ishlayotgan bo'lsa avval `Ctrl+C` bilan to'xtating. Faqat Telegram holatini, AI xizmatlariga chiqmasdan tekshirish:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\telegram-status.ps1
+```
+
+Freeze bo'lsa, yordamchi akkauntga rasmiy Telegram ilovasida kirib, **Appeal / Apellyatsiya** orqali cheklovni ko'rib chiqishni so'rang. Akkauntni faqat Telegram muzlatishdan chiqaradi. Kod, API kaliti, AI modeli yoki qayta-qayta login qilish bu cheklovni olib tashlamaydi. Dastur sessiya va kalitlarni o'chirmaydi, apellyatsiyani avtomatik yubormaydi va cheklovni aylanib o'tishga urinmaydi. Apellyatsiya matnini shaxsan ko'rib chiqib yuboring. Manbalar: [Telegram frozen accounts](https://core.telegram.org/api/auth#frozen-accounts) va [Telegram Support](https://telegram.org/support).
+
 ## Telegramda foydalanish
 
 Yordamchi akkauntiga `/help` yozing. Matn, ovozli xabar yoki oddiy Telegram shaxsiy qo'ng'irog'idan foydalaning. `/call` yuborsangiz, agent sizga qo'ng'iroq qiladi. Javob bergach, AI bilan gaplashasiz; gapini bo'lib savol berish mumkin.

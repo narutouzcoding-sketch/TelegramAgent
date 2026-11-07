@@ -15,6 +15,7 @@ from .config import ROOT, Settings
 from .env_defaults import ensure_env_defaults
 from .owner_setup import configured_owner, pair_owner
 from .setup_inputs import prompt_phone, telegram_credentials
+from .telegram_health import ensure_telegram_account
 
 
 @contextmanager
@@ -81,7 +82,7 @@ async def setup(from_env=False):
             password=lambda: getpass.getpass("Telegram 2FA paroli: "),
             code_callback=lambda: getpass.getpass("Telegram login kodi: "),
         )
-        me = await client.get_me()
+        me = await ensure_telegram_account(client, existing.get("TIMEZONE") or "Asia/Tashkent")
         print(f"Yordamchi akkaunt: {me.first_name} (ID: {me.id})")
         if me.bot:
             raise ValueError("Yordamchi oddiy Telegram akkaunti bo'lishi kerak.")
@@ -145,6 +146,26 @@ async def doctor(online=False):
         from openai import AsyncOpenAI
         from telethon import TelegramClient
 
+        # Validate Telegram first: a readable frozen session must not be reported as healthy.
+        client = TelegramClient(
+            str(ROOT / "data" / "assistant"), settings.api_id, settings.api_hash
+        )
+        try:
+            await client.connect()
+            me = await ensure_telegram_account(client, settings.timezone)
+            if me.bot or me.id == settings.owner_id:
+                raise ValueError("Yordamchi uchun alohida oddiy akkaunt kerak.")
+            owner = await configured_owner(
+                client, me.id, settings.owner_username, str(settings.owner_id)
+            )
+            if owner is None or owner.id != settings.owner_id:
+                raise ValueError(
+                    "Asosiy akkaunt topilmadi. login.ps1 orqali /pair xabar bilan qayta ulang."
+                )
+            print("Telegram avtorizatsiya, freeze holati va egasi: OK")
+        finally:
+            await client.disconnect()
+
         if settings.resolved_text_provider == "gemini":
             from .gemini_text import GeminiText
 
@@ -166,32 +187,35 @@ async def doctor(online=False):
                     print(f"OpenAI model mavjud: {model}")
         else:
             print("OpenAI ovozli funksiyalari sozlanmagan; Gemini matnli rejimi tanlangan.")
-        client = TelegramClient(
-            str(ROOT / "data" / "assistant"), settings.api_id, settings.api_hash
-        )
-        try:
-            await client.connect()
-            if not await client.is_user_authorized():
-                raise ValueError("Telegram login zarur. setup.ps1 ni ishga tushiring.")
-            me = await client.get_me()
-            if me.bot or me.id == settings.owner_id:
-                raise ValueError("Yordamchi uchun alohida oddiy akkaunt kerak.")
-            owner = await configured_owner(
-                client, me.id, settings.owner_username, str(settings.owner_id)
-            )
-            if owner is None or owner.id != settings.owner_id:
-                raise ValueError(
-                    "Asosiy akkaunt topilmadi. login.ps1 orqali /pair xabar bilan qayta ulang."
-                )
-            print("Telegram avtorizatsiya va egasi: OK")
-        finally:
-            await client.disconnect()
     return 0
+
+
+async def telegram_status():
+    from telethon import TelegramClient
+
+    existing = dotenv_values(ROOT / ".env")
+    api_id, api_hash = telegram_credentials(
+        existing.get("TELEGRAM_API_ID"), existing.get("TELEGRAM_API_HASH")
+    )
+    client = TelegramClient(str(ROOT / "data" / "assistant"), api_id, api_hash)
+    try:
+        await client.connect()
+        me = await ensure_telegram_account(client, existing.get("TIMEZONE") or "Asia/Tashkent")
+        print(
+            f"Yordamchi ID: {me.id}. Username: {'@' + me.username if me.username else 'qo‘yilmagan'}."
+        )
+        print(
+            "Telegram serverida akkauntning freeze belgisi yo'q. Xabar yetkazish alohida tekshiriladi."
+        )
+    finally:
+        await client.disconnect()
 
 
 def main():
     parser = argparse.ArgumentParser(description="Shaxsiy Telegram AI yordamchi")
-    parser.add_argument("command", choices=["configure", "setup", "login", "doctor", "run"])
+    parser.add_argument(
+        "command", choices=["configure", "setup", "login", "doctor", "telegram-status", "run"]
+    )
     parser.add_argument(
         "--economy",
         action="store_true",
@@ -214,6 +238,9 @@ def main():
         elif args.command == "doctor":
             with process_lock():
                 return asyncio.run(doctor(args.online))
+        elif args.command == "telegram-status":
+            with process_lock():
+                asyncio.run(telegram_status())
         else:
             from .app import AgentApp
 

@@ -15,6 +15,7 @@ from .config import ROOT
 from .owner_setup import configured_owner
 from .scheduler import Scheduler
 from .store import Store
+from .telegram_health import ensure_telegram_account
 
 log = logging.getLogger(__name__)
 
@@ -89,9 +90,7 @@ class AgentApp:
         from pytgcalls.types import ChatUpdate, Device, Direction
 
         await self.telegram.connect()
-        if not await self.telegram.is_user_authorized():
-            raise ValueError("Telegram sessiya yo'q. Avval setup.ps1 orqali login qiling.")
-        me = await self.telegram.get_me()
+        me = await ensure_telegram_account(self.telegram, self.settings.timezone)
         if me.bot or me.id == self.settings.owner_id:
             raise ValueError("Yordamchi uchun siznikidan boshqa, oddiy Telegram akkaunti kerak.")
         owner_user = await configured_owner(

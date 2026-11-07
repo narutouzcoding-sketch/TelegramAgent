@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -15,7 +16,7 @@ def prepare(monkeypatch, tmp_path):
         "TELEGRAM_PHONE=+998901234567\nOWNER_TELEGRAM_USERNAME=@owner\n",
         encoding="utf-8",
     )
-    client = Mock()
+    client = AsyncMock(return_value=SimpleNamespace(config=SimpleNamespace(value=[])))
     client.start = AsyncMock()
     client.get_me = AsyncMock(return_value=User(id=1, first_name="Assistant"))
     client.get_entity = AsyncMock(return_value=User(id=42, first_name="Owner"))

@@ -9,7 +9,7 @@
 - NTgCalls native DLL importi: muvaffaqiyatli.
 - 48 kHz mono PCM jonli jo'natish va qabul qilish konfiguratsiyalari: yaratildi.
 - `ruff check telegram_agent tests`: muvaffaqiyatli.
-- `python -m pytest -q -W error::RuntimeWarning`: **76 passed**, ogohlantirishsiz.
+- `python -m pytest -q -W error::RuntimeWarning`: **81 passed**, ogohlantirishsiz.
 - `uv lock --check`: muvaffaqiyatli.
 - Barcha PowerShell skriptlarining sintaksisi: tekshirildi.
 
@@ -32,6 +32,9 @@ generatsiya chegarasi, Gemini kvotasida profil almashtirmaslik, token chegarasid
 amalini bajarmaslik, OpenAI kalitisiz ovozli qo'ng'iroqni terishdan oldin rad etish tekshirildi.
 Yangi `.env` maydonlarini qo'shishda oldingi maxfiy qiymatlar saqlanishi, Gemini-only matn
 konfiguratsiyasi va suhbat kontekstini qisqartirish saqlangan rejalarni o'chirmasligi tekshirildi.
+Telegram sessiyasi o'qishga yaroqli bo'lsa ham `freeze_since_date` mavjudligida login/start
+bloklanishi, oddiy `restricted` bayrog'ini freeze deb adashtirmaslik, o'chirilgan/mavjud bo'lmagan
+akkauntni ishga tushirmaslik va freeze aniqlanganda qo'ng'iroq/message worker larini yaratmaslik tekshirildi.
 Tashqi xizmatlar mock bilan almashtirilgan; pulli API so'rovi yuborilmadi.
 
 ## Sizning akkauntingiz bilan qolgan tekshiruvlar
@@ -48,3 +51,10 @@ hisobotga ko'chirilmaydi. Quyidagilar mahalliy test bilan isbotlanmagan:
 7. Haqiqiy Gemini API kaliti bilan generatsiya sifati, function calling va akkaunt kvotalari.
 
 `README.md` dagi sozlash va ikki daqiqalik haqiqiy sinovni bajaring.
+
+2026-11-07 kuni foydalanuvchi ruxsati bilan agent to'xtatilgach, haqiqiy Telegram sessiyasida
+faqat o'qish tekshiruvi bajarildi. Server `get_me` orqali o'chirilmagan foydalanuvchini qaytardi,
+ammo `help.getAppConfig` akkaunt muzlatilganini bildirdi. Yangilangan `telegram-status` shu holatni
+to'g'ri aniqlab, ishni davom ettirmadi. Xabar/qo'ng'iroq yuborilmadi, apellyatsiya topshirilmadi,
+sessiya va API kalitlari o'zgartirilmadi. Bu Telegram cheklovidan keyingi generatsiya yoki
+qo'ng'iroq funksiyalarining muvaffaqiyatli ishlaganini anglatmaydi.
