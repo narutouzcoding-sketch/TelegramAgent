@@ -4,7 +4,25 @@ Telegram ichida yozishadigan, ovozli xabarga javob beradigan, shaxsiy qo'ng'iroq
 
 ## Hozirgi holat
 
-Windows uchun mahalliy web boshqaruv paneli, Telegram agenti, Python 3.12 muhiti va `uv.lock` tayyor. Panel orqali haqiqiy Telegram agentini ishga tushirish/to'xtatish tekshirildi; 128 avtomatlashtirilgan test o'tdi. Gemini va bepul ovoz rejimi ishlatilishi mumkin. OpenAI ovoz sinovi billing/kvota xatosi bilan tugagan. Yangi o'rnatishda qo'ng'iroqlar standart holatda o'chirilgan. Serverga joylash va HTTPS hali bajarilmagan.
+### Ovoz va barqarorlik yangilanishi
+
+Yangi qo'ng'iroqlarda **asl ovoz AI dan alohida yoziladi**. Suhbatdoshning ovozi egasining Telegram chatiga golos yuboriladi; **Yozuvlar** bo'limida suhbatdoshning asl ovozi va to'liq suhbat eshitiladi. Matn xato tanilsa yoki AI kvotasi tugasa ham mavjud audio yo'qolmaydi. Uzilgan jarayonning PCM fayllari keyingi ishga tushishda tiklanib OGG/Opus ga aylantiriladi. Yuborish xatosida navbat saqlanadi; uchta urinishdan keyin paneldan qayta yuborish mumkin. Audio faqat panelga kirgan foydalanuvchiga ochiladi. `RECORD_CALLS=true` standart; fayllar `data/recordings/` ichida, Git'ga kiritilmaydi. Avval yozilmagan eski qo'ng'iroq ovozini tiklash mumkin emas.
+
+**Gapni tanish:** `GEMINI_AUDIO_ASR=true` rejimida qisqa ovoz Google Gemini ga yuborilib, asl tilda matnga aylantiriladi. Bu o'zbekcha jumlalarda mahalliy Whisper `small` dan ancha yaxshi natija berdi. Kvota yoki ulanish xatosida mahalliy Whisper zaxira bo'ladi; asl yozuv saqlanadi. Ovoz Google ga yuborilmasin desangiz `GEMINI_AUDIO_ASR=false` tanlang. Suhbat navbat bilan ishlaydi; agent ovoz chiqarayotgandagi ustma-ust gaplar ASR uchun ajratiladi, ammo original yozuvga tushadi. AI o'ylayotgan paytda kelgan keyingi gaplar navbatda saqlanadi. `alo`/`hello` savolning javobi deb qabul qilinib darhol yakunlanmaydi.
+
+**API tokensiz yozib olish:** Qo'ng'iroqlar formasida **“Asl ovozini yozib olsin — 0 AI token”** turini tanlang. Savolni tanlangan tilda o'zingiz yozing: bu rejim tarjima, AI yoki matn tanishni chaqirmaydi. Agent savolni o'qib, ovozli javobni yozadi va egasiga yuboradi. Masalan:
+
+```text
+/recordto en @username | What should I bring for breakfast?
+```
+
+**Token tejash:** oddiy suhbatga keraksiz tool sxemalari yuborilmaydi; kontaktlar va qo'ng'iroqlar ro'yxatida to'liq transkriptlar qayta AI kontekstiga kiritilmaydi. Saqlash amali muvaffaqiyatli tugagach, tasdiq matni AI ni ikkinchi marta chaqirmasdan tayyorlanadi. Matnli javob token chegarasida qisqarsa mavjud javob ko'rsatiladi; tugallanmagan tool amali bajarilmaydi. Keyingi xabarlar navbatga olinadi; sayt so'rovi xato tugasa yozilgan xabar maydonda qayta tiklanadi.
+
+**Bepul mahalliy zaxira:** `local-ai.ps1` rasmiy Ollama orqali `qwen3:4b-instruct` ni o'rnatadi/yuklaydi. Native yuklash IPv6 da uzilsa, rasmiy model qatlamlari IPv4 orqali davom ettiriladi va SHA-256 tekshiriladi. `LOCAL_AI_FALLBACK=true` tanlanganda Gemini 429/vaqtinchalik xatolarida matnli suhbat mahalliy modelga o'tadi. Retry-After davomida Gemini qayta chaqirilmaydi, kalit/akkaunt aylantirilmaydi. Faqat `127.0.0.1`/`localhost` manzili qabul qilinadi. Mahalliy server o'rnatilgan bo'lsa kerak paytda fonda ishga tushadi. [Rasmiy instruct modeli](https://ollama.com/library/qwen3:4b-instruct).
+
+Mahalliy model kompyuter CPU/RAM resursini ishlatadi va sekinroq bo'lishi mumkin. Jonli qo'ng'iroq paytida uzoq CPU generatsiyasi kutilmaydi: AI mavjud bo'lmasa asl ovozni yozib olishga o'tadi. **Yozuvlar** bo'limida API so'rovlari, kirish/chiqish tokenlari, mahalliy so'rovlar va nutq tanish manbasi ko'rinadi. Hisoblagichlar shu jarayon boshlanganidan beri; ular Google hisobining qolgan kvotasi emas.
+
+Windows uchun mahalliy web boshqaruv paneli, Telegram agenti, Python 3.12 muhiti va `uv.lock` tayyor. Panel orqali haqiqiy Telegram agentini ishga tushirish/to'xtatish tekshirildi; 149 avtomatlashtirilgan test o'tdi. Gemini va bepul ovoz rejimi ishlatilishi mumkin. OpenAI ovoz sinovi billing/kvota xatosi bilan tugagan. Yangi o'rnatishda qo'ng'iroqlar standart holatda o'chirilgan. Serverga joylash va HTTPS hali bajarilmagan.
 
 ## Boshqaruv paneli
 
@@ -67,7 +85,7 @@ PWA manifest, ikonlar va statik sahifa keshi tayyor; shaxsiy API ma'lumotlari ke
 
 ### Bepul ovozli rejim
 
-`VOICE_PROVIDER=free` va `TEXT_PROVIDER=gemini` tanlanganda OpenAI API ishlatilmaydi. Ovoz shu kompyuterda [faster-whisper](https://github.com/SYSTRAN/faster-whisper) `small` modeli, CPU/int8 orqali taniladi. Javob matni mavjud Gemini kaliti orqali olinadi. [edge-tts](https://github.com/rany2/edge-tts) o'zbekcha `uz-UZ-MadinaNeural` yoki `uz-UZ-SardorNeural` bilan ovoz yaratadi; javob matni Edge onlayn xizmatiga yuboriladi. Bu to'liq oflayn tizim emas. Edge TTS kafolatlangan rasmiy pulli API o'rnini bosmaydi va xizmat o'zgarishi mumkin. Gemini bepul kvotasi tugasa, pulli provayderga avtomatik o'tilmaydi.
+`VOICE_PROVIDER=free` va `TEXT_PROVIDER=gemini` tanlanganda OpenAI API ishlatilmaydi. Ovoz standart holatda Gemini native audio orqali taniladi; mahalliy zaxirada [faster-whisper](https://github.com/SYSTRAN/faster-whisper) `small`, CPU/int8 ishlaydi. Javob matni mavjud Gemini kaliti orqali olinadi. [edge-tts](https://github.com/rany2/edge-tts) o'zbekcha `uz-UZ-MadinaNeural` yoki `uz-UZ-SardorNeural` bilan ovoz yaratadi; javob matni Edge onlayn xizmatiga yuboriladi. Bu to'liq oflayn tizim emas. Edge TTS kafolatlangan rasmiy pulli API o'rnini bosmaydi va xizmat o'zgarishi mumkin. Gemini bepul kvotasi tugasa, pulli provayderga avtomatik o'tilmaydi.
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\free-voice.ps1 -EnableCalls

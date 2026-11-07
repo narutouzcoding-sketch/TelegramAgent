@@ -41,6 +41,7 @@ class PanelControl:
         self.agent = self.task = None
         self.phase, self.last_error = "stopped", ""
         self.chat_lock = asyncio.Lock()
+        self.chat_waiters = 0
         self.control_lock = asyncio.Lock()
         self.contact_sync_lock = asyncio.Lock()
         self.audio = {}
@@ -110,21 +111,25 @@ class PanelControl:
     async def ask(self, text):
         if not isinstance(text, str) or not text.strip() or len(text) > 12000:
             raise ValueError("Xabar 1..12000 belgidan iborat bo'lsin.")
-        if self.chat_lock.locked():
-            raise ValueError("Oldingi javob tayyorlanyapti. Biroz kuting.")
-        async with self.chat_lock:
-            if self.connected:
-                brain = self.agent.brain
-            else:
-                if self.idle_brain is None:
-                    self.idle_brain = Brain(
-                        replace(
-                            self.settings, enable_voice_calls=False, enable_contact_calls=False
-                        ),
-                        self.store,
-                    )
-                brain = self.idle_brain
-            return {"reply": await brain.answer(text.strip())}
+        if self.chat_waiters >= 4:
+            raise ValueError("Navbatda 4 ta xabar bor. Biroz kuting; xabaringiz yuborilmadi.")
+        self.chat_waiters += 1
+        try:
+            async with self.chat_lock:
+                if self.connected:
+                    brain = self.agent.brain
+                else:
+                    if self.idle_brain is None:
+                        self.idle_brain = Brain(
+                            replace(
+                                self.settings, enable_voice_calls=False, enable_contact_calls=False
+                            ),
+                            self.store,
+                        )
+                    brain = self.idle_brain
+                return {"reply": await brain.answer(text.strip())}
+        finally:
+            self.chat_waiters -= 1
 
     def contact(self, contact_id):
         row = next((c for c in self.store.list_contacts() if c["id"] == int(contact_id)), None)
@@ -229,7 +234,12 @@ class PanelControl:
         folder.mkdir(exist_ok=True)
         token = secrets.token_urlsafe(20)
         path = folder / (token + ".ogg")
-        if language not in {"uz", "en", "ru"} or mode not in {"relay", "ask", "conversation"}:
+        if language not in {"uz", "en", "ru"} or mode not in {
+            "relay",
+            "ask",
+            "conversation",
+            "record",
+        }:
             raise ValueError("Til yoki suhbat turi noto'g'ri.")
         text = relay_text(agent.owner_name, message.strip())
         if language != "uz" or mode != "relay":
@@ -257,6 +267,8 @@ class PanelControl:
     def state(self):
         phase = "running" if self.connected else self.phase
         cfg = self.runtime_settings()
+        brain = self.agent.brain if self.connected else self.idle_brain
+        adapter = getattr(brain, "gemini", None)
         return {
             "agent": {
                 "phase": phase,
@@ -269,12 +281,18 @@ class PanelControl:
                 "voice_enabled": cfg.enable_voice_calls,
                 "active_call": bool(self.connected and self.agent.call_lock.locked()),
                 "max_calls_per_hour": cfg.max_calls_per_hour,
+                "record_calls": cfg.record_calls,
+                "asr_provider": getattr(brain, "last_asr", "Kutilyapti"),
+                "ai_status": adapter.status()
+                if adapter is not None and hasattr(adapter, "status")
+                else None,
             },
             "plans": self.store.list_plans(),
             "reminders": self.store.list_reminders(),
             "contacts": self.store.list_contacts(),
             "calls": self.store.list_contact_calls(),
             "messages": self.store.history(40),
+            "recordings": self.store.list_recordings(),
         }
 
     async def close(self):
@@ -507,6 +525,8 @@ def create_panel(control, password, password_path=None):
             )
         elif action == "cancel-call":
             result = control.store.cancel_contact_call(int(data["id"]))
+        elif action == "retry-recording":
+            result = control.store.retry_recording(data["id"])
         elif action == "call-owner":
             agent = control.require_agent()
             if not agent.settings.enable_voice_calls:
@@ -528,6 +548,23 @@ def create_panel(control, password, password_path=None):
             raise web.HTTPNotFound()
         return web.FileResponse(entry[0], headers={"Content-Type": "audio/ogg"})
 
+    async def recording_audio(request):
+        row = control.store.db.execute(
+            "SELECT * FROM recordings WHERE id=?", (request.match_info["recording_id"],)
+        ).fetchone()
+        if row is None:
+            raise web.HTTPNotFound()
+        filename = (
+            row["incoming_filename"]
+            if request.match_info["kind"] == "incoming"
+            else row["filename"]
+        )
+        folder = (control.root / "data" / "recordings").resolve()
+        path = (folder / filename).resolve()
+        if not filename or not path.is_relative_to(folder) or not path.is_file():
+            raise web.HTTPNotFound()
+        return web.FileResponse(path, headers={"Content-Type": "audio/ogg"})
+
     for route in (
         "/",
         "/app.js",
@@ -544,6 +581,9 @@ def create_panel(control, password, password_path=None):
     app.router.add_get("/api/{action:state}", dispatch)
     app.router.add_post("/api/{action}", dispatch)
     app.router.add_get("/api/audio/{token}", audio)
+    app.router.add_get(
+        "/api/recordings/{recording_id:[a-f0-9]{32}}/{kind:audio|incoming}", recording_audio
+    )
 
     async def cleanup(_):
         await control.close()

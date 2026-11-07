@@ -46,6 +46,11 @@ class Settings:
     min_message_interval_seconds: float = 2
     call_cooldown_seconds: int = 60
     max_calls_per_hour: int = 3
+    record_calls: bool = True
+    local_fallback_enabled: bool = False
+    local_model: str = "qwen3:4b-instruct"
+    local_ai_url: str = "http://127.0.0.1:11434"
+    gemini_audio_asr: bool = False
 
     @classmethod
     def load(cls, require_telegram=True):
@@ -111,8 +116,22 @@ class Settings:
             min_message_interval_seconds=float(os.getenv("MIN_MESSAGE_INTERVAL_SECONDS", "2")),
             call_cooldown_seconds=int(os.getenv("CALL_COOLDOWN_SECONDS", "60")),
             max_calls_per_hour=int(os.getenv("MAX_CALLS_PER_HOUR", "3")),
+            record_calls=os.getenv("RECORD_CALLS", "true").strip().lower() == "true",
+            local_fallback_enabled=os.getenv("LOCAL_AI_FALLBACK", "true").strip().lower() == "true",
+            local_model=os.getenv("LOCAL_AI_MODEL", "qwen3:4b-instruct").strip(),
+            local_ai_url=os.getenv("LOCAL_AI_URL", "http://127.0.0.1:11434").strip(),
+            gemini_audio_asr=os.getenv("GEMINI_AUDIO_ASR", "true").strip().lower() == "true",
         )
         ZoneInfo(result.timezone)
+        from urllib.parse import urlparse
+
+        local_url = urlparse(result.local_ai_url)
+        if local_url.scheme not in {"http", "https"} or local_url.hostname not in {
+            "127.0.0.1",
+            "localhost",
+            "::1",
+        }:
+            raise ValueError("LOCAL_AI_URL faqat kompyuterning loopback manzili bo'lishi mumkin.")
         if result.voice_provider not in {"openai", "free"}:
             raise ValueError("VOICE_PROVIDER openai yoki free bo'lishi kerak.")
         if result.local_stt_model not in {"tiny", "base", "small", "medium"}:

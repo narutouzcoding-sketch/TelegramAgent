@@ -20,7 +20,7 @@ def test_segmenter_ignores_silence_and_clicks_but_keeps_full_utterance():
     for _ in range(30):
         assert segmenter.push(LOUD) is None
     results = [segmenter.push(SILENCE) for _ in range(90)]
-    assert results[-1] and LOUD * 30 in results[-1]
+    assert any(value and LOUD * 30 in value for value in results)
     assert not segmenter.frames
 
 

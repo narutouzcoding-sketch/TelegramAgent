@@ -30,6 +30,7 @@ HELP = """Men shaxsiy AI yordamchingizman. O'zbekcha yozing, ovozli xabar yubori
 /contacts — ulashilgan kontaktlar
 /callto en @username | xabar — tanlangan tilda aytish
 /askto en @username | savol — javob olib kelish
+/recordto en @username | English question — asl ovoz, AI tokensiz
 /talkto en @username | vazifa — qisqa suhbat
 /contacts ism — kontaktlardan qidirish
 /calls — topshirilgan qo'ng'iroqlar holati
@@ -41,7 +42,7 @@ Misol: «Ertaga 09:00 da dars qilishimni qo'ng'iroq qilib eslat.»
 «Har kuni 20:30 da ingliz tilini o'rganishni eslat.»
 «Rejamga kitob o'qishni qo'sh.»
 
-Ovoz AI tomonidan yaratiladi. Suhbatning so'nggi matnlari shu kompyuterda saqlanadi. Matn tanlangan Gemini/OpenAI xizmatiga yuboriladi. Bepul rejimda ovoz shu kompyuterda taniladi, javob matni Edge ovoz xizmatiga yuboriladi; OpenAI rejimida ovoz OpenAI ga yuboriladi.
+Ovoz AI tomonidan yaratiladi. Suhbatning so'nggi matnlari shu kompyuterda saqlanadi. Matn tanlangan Gemini/OpenAI xizmatiga yuboriladi. Bepul ovoz rejimida qisqa nutq Gemini orqali taniladi; kvotada mahalliy Whisper ishlaydi. Asl ovoz yozuvi egasiga yuboriladi. Javob matni Edge ovoz xizmatiga yuboriladi; OpenAI rejimida ovoz OpenAI ga yuboriladi.
 Eslatish uchun dastur, kompyuter va internet ishlashi kerak."""
 
 
@@ -80,6 +81,7 @@ class AgentApp:
         self.relay_target = None
         self.relay_ended = None
         self.relay_voice = None
+        self.active_recording = None
 
     async def send_text(self, text):
         # Plain text prevents model-generated Markdown links from changing message meaning.
@@ -132,6 +134,9 @@ class AgentApp:
                 await self._start_call_transport(me.id)
             scheduler = Scheduler(self.store, self.deliver, self.settings.reminder_grace_hours)
             self.scheduler_task = asyncio.create_task(scheduler.run())
+            from .recordings import run_recordings
+
+            self.spawn(run_recordings(self))
             if self.settings.enable_voice_calls:
                 self.contact_queue_task = asyncio.create_task(run_queue(self))
             log.info("Agent started; owner allowlist active")
@@ -208,14 +213,24 @@ class AgentApp:
 
         @self.calls.on_update(filters.stream_frame(Direction.INCOMING, Device.MICROPHONE))
         async def audio(_, update):
-            if update.chat_id == self.settings.owner_id and self.voice:
-                for frame in update.frames:
-                    self.voice.accept_pcm48(frame.frame)
-            elif update.chat_id == self.relay_target and self.relay_voice:
-                for frame in update.frames:
-                    self.relay_voice.accept_pcm48(frame.frame)
+            self.receive_audio(update)
 
         await self.calls.start()
+
+    def receive_audio(self, update):
+        recording = getattr(self, "active_recording", None)
+        if recording is not None and update.chat_id == recording.peer_id:
+            recording.write("incoming", b"".join(frame.frame for frame in update.frames))
+        voice = (
+            self.voice
+            if update.chat_id == self.settings.owner_id
+            else self.relay_voice
+            if update.chat_id == self.relay_target
+            else None
+        )
+        if voice:
+            for frame in update.frames:
+                voice.accept_pcm48(frame.frame)
 
     async def queue_requested_call(self, target, message, **options):
         from dataclasses import replace
@@ -307,13 +322,18 @@ class AgentApp:
         async with self.call_lock:
             self.call_task = asyncio.current_task()
             parameters = AudioParameters(bitrate=48000, channels=1)
+            from .recordings import begin_recording, end_recording
+
+            recording = None
 
             async def send(frame):
                 await self.calls.send_frame(self.settings.owner_id, Device.MICROPHONE, frame)
+                if recording is not None:
+                    recording.write("outgoing", frame)
 
             voice = VoiceSession(self.brain, send, introduction)
             try:
-                if self.settings.voice_provider == "free":
+                if self.settings.voice_provider == "free" and not self.brain.use_native_asr:
                     await self.brain.free_speech.prepare()
                 # play() returns when the peer has answered and media is connected.
                 async with asyncio.timeout(self.settings.ring_timeout_seconds + 45):
@@ -328,6 +348,9 @@ class AgentApp:
                             ),
                             config=CallConfig(timeout=self.settings.ring_timeout_seconds),
                         ),
+                    )
+                    recording = begin_recording(
+                        self, self.settings.owner_id, "Yordamchi bilan suhbat"
                     )
                     self.voice = voice
                     await self.calls.record(self.settings.owner_id, RecordStream(True, parameters))
@@ -348,6 +371,7 @@ class AgentApp:
                 await voice.close()
                 with suppress(Exception):
                     await self.calls.leave_call(self.settings.owner_id)
+                end_recording(self, recording)
                 self.call_task = None
 
     async def hangup(self):
@@ -465,10 +489,10 @@ class AgentApp:
                 or "Qo'ng'iroq topshiriqlari yo'q."
             )
             return
-        if command in {"/callto", "/askto", "/talkto", "/cancelcall"}:
+        if command in {"/callto", "/askto", "/talkto", "/recordto", "/cancelcall"}:
             try:
                 arguments = text[len(command) :].strip()
-                if command in {"/callto", "/askto", "/talkto"}:
+                if command in {"/callto", "/askto", "/talkto", "/recordto"}:
                     if not self.settings.enable_voice_calls:
                         raise ValueError(
                             "Kontaktlarga qo'ng'iroq hozir o'chirilgan. Avval faqat egasi bilan sinov qilinadi."
@@ -486,9 +510,12 @@ class AgentApp:
                     result = await self.queue_requested_call(
                         target.strip(),
                         message.strip(),
-                        mode={"/callto": "relay", "/askto": "ask", "/talkto": "conversation"}[
-                            command
-                        ],
+                        mode={
+                            "/callto": "relay",
+                            "/askto": "ask",
+                            "/talkto": "conversation",
+                            "/recordto": "record",
+                        }[command],
                         language=language,
                     )
                     await self.send_text(
@@ -537,50 +564,57 @@ class AgentApp:
             except ValueError as exc:
                 await self.send_text(str(exc))
             return
-        if self.message_lock.locked():
-            await self.send_text("Oldingi xabaringizni ko'rib chiqyapman. Birozdan keyin yuboring.")
+        if getattr(self, "pending_messages", 0) >= 4:
+            await self.send_text(
+                "Navbatda 4 ta xabar bor. Bu xabar qabul qilinmadi; birozdan keyin yuboring."
+            )
             return
-        async with self.message_lock:
-            try:
-                if event.message.voice:
-                    if (event.message.file.size or 0) > 20 * 1024 * 1024:
-                        await self.send_text("Ovozli xabar 20 MB dan kichik bo'lishi kerak.")
-                        return
-                    with tempfile.TemporaryDirectory(dir=ROOT / "data", prefix="voice-") as folder:
-                        path = Path(
-                            await self.policy.action(
-                                lambda: event.message.download_media(
-                                    file=str(Path(folder) / "in.ogg")
-                                )
-                            )
+        self.pending_messages = getattr(self, "pending_messages", 0) + 1
+        try:
+            async with self.message_lock:
+                await self.process_message(event, text)
+        finally:
+            self.pending_messages -= 1
+
+    async def process_message(self, event, text):
+        try:
+            if event.message.voice:
+                if (event.message.file.size or 0) > 20 * 1024 * 1024:
+                    await self.send_text("Ovozli xabar 20 MB dan kichik bo'lishi kerak.")
+                    return
+                with tempfile.TemporaryDirectory(dir=ROOT / "data", prefix="voice-") as folder:
+                    path = Path(
+                        await self.policy.action(
+                            lambda: event.message.download_media(file=str(Path(folder) / "in.ogg"))
                         )
-                        text = await self.brain.transcribe(path)
-                        if not text.strip():
-                            await self.send_text("Ovozni tushunmadim. Qayta yuboring.")
-                            return
-                        await self.send_text("Eshitdim: " + text)
-                        reply = await self.brain.answer(text)
-                        await self.send_text(reply)
-                        try:
-                            out = Path(folder) / "reply.ogg"
-                            await self.brain.speech(reply, out)
-                            await self.policy.send(
-                                lambda: self.telegram.send_file(self.owner, out, voice_note=True)
-                            )
-                        except Exception as exc:
-                            log.info("Voice note synthesis failed type=%s", type(exc).__name__)
-                elif text:
-                    await self.send_text(await self.brain.answer(text[:12000]))
-                else:
-                    await self.send_text("Matn yoki ovozli xabar yuboring. /help — yordam.")
-            except Exception as exc:
-                log.warning("Message handling failed type=%s", type(exc).__name__)
-                await self.send_text(
-                    (
-                        public_ai_error(exc)
-                        if isinstance(exc, (APIError, AIUnavailable))
-                        else "So'rovni yakunlay olmadim."
                     )
-                    + " /reminders va /plans bilan "
-                    "saqlangan amallarni tekshiring, keyin qayta urinib ko'ring."
+                    text = await self.brain.transcribe(path)
+                    if not text.strip():
+                        await self.send_text("Ovozni tushunmadim. Qayta yuboring.")
+                        return
+                    await self.send_text("Eshitdim: " + text)
+                    reply = await self.brain.answer(text)
+                    await self.send_text(reply)
+                    try:
+                        out = Path(folder) / "reply.ogg"
+                        await self.brain.speech(reply, out)
+                        await self.policy.send(
+                            lambda: self.telegram.send_file(self.owner, out, voice_note=True)
+                        )
+                    except Exception as exc:
+                        log.info("Voice note synthesis failed type=%s", type(exc).__name__)
+            elif text:
+                await self.send_text(await self.brain.answer(text[:12000]))
+            else:
+                await self.send_text("Matn yoki ovozli xabar yuboring. /help — yordam.")
+        except Exception as exc:
+            log.warning("Message handling failed type=%s", type(exc).__name__)
+            await self.send_text(
+                (
+                    public_ai_error(exc)
+                    if isinstance(exc, (APIError, AIUnavailable))
+                    else "So'rovni yakunlay olmadim."
                 )
+                + " /reminders va /plans bilan "
+                "saqlangan amallarni tekshiring, keyin qayta urinib ko'ring."
+            )

@@ -1,4 +1,4 @@
-"""Resolve explicitly requested recipients and relay a fixed message over Telegram."""
+"""Resolve owner-requested Telegram calls, deliver messages and collect bounded replies."""
 
 import asyncio
 import subprocess
@@ -17,7 +17,7 @@ from .setup_inputs import international_phone
 
 
 def relay_text(owner_name, message):
-    return f"Assalomu alaykum. Men {owner_name}ning AI yordamchisiman. U sizga quyidagi xabarni yetkazishimni so'radi. {message}. Rahmat."
+    return f"Assalomu alaykum. Men {owner_name}ning AI yordamchisiman. Qo'ng'iroq ovozi yozilib, egasiga yuboriladi. U sizga quyidagi xabarni yetkazishimni so'radi. {message}. Rahmat."
 
 
 class RecipientResolver:
@@ -113,13 +113,16 @@ async def decode_pcm(path):
 
 
 async def play_relay(app, user, audio):
-    from pytgcalls.types import CallConfig, Device, ExternalMedia, MediaStream
+    from pytgcalls.types import CallConfig, Device, ExternalMedia, MediaStream, RecordStream
     from pytgcalls.types.raw import AudioParameters
+
+    from .recordings import begin_recording, end_recording
 
     async with app.call_lock:
         app.call_task = asyncio.current_task()
         app.relay_target = user.id
         app.relay_ended = asyncio.Event()
+        recording = None
         try:
             async with asyncio.timeout(app.settings.ring_timeout_seconds + 45):
                 await app.policy.dial(
@@ -134,7 +137,14 @@ async def play_relay(app, user, audio):
                         config=CallConfig(timeout=app.settings.ring_timeout_seconds),
                     ),
                 )
-            # Feed only after answer. No recipient audio is recorded or given to the model.
+            recording = begin_recording(
+                app, user.id, str(user.id), getattr(app, "contact_job_id", None)
+            )
+            if recording is not None:
+                await app.calls.record(
+                    user.id, RecordStream(True, AudioParameters(bitrate=48000, channels=1))
+                )
+            # Feed only after answer. Recording is captured independently when enabled.
             loop = asyncio.get_running_loop()
             deadline = loop.time()
             for offset in range(0, len(audio), 960):
@@ -145,6 +155,8 @@ async def play_relay(app, user, audio):
                 await app.calls.send_frame(
                     user.id, Device.MICROPHONE, audio[offset : offset + 960].ljust(960, b"\0")
                 )
+                if recording is not None:
+                    recording.write("outgoing", audio[offset : offset + 960].ljust(960, b"\0"))
                 deadline += 0.01
                 await asyncio.sleep(max(0, deadline - loop.time()))
                 if loop.time() - deadline > 0.1:
@@ -155,6 +167,7 @@ async def play_relay(app, user, audio):
         finally:
             with suppress(Exception):
                 await app.calls.leave_call(user.id)
+            end_recording(app, recording)
             app.relay_target = None
             app.relay_ended = None
             app.call_task = None
@@ -227,7 +240,7 @@ async def execute_job(app, job):
         )
     else:
         if task is not None:
-            answered = any(row["role"] == "user" for row in task.transcript)
+            answered = task.recorded_answer or any(row["role"] == "user" for row in task.transcript)
             app.store.finish_contact_call(
                 job["id"], "completed" if answered else "no_answer", summary
             )

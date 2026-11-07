@@ -24,6 +24,7 @@ class Store:
     def __init__(self, path: Path, timezone="Asia/Tashkent"):
         path.parent.mkdir(parents=True, exist_ok=True)
         self.timezone = timezone
+        self.root = path.parent.parent if path.parent.name == "data" else path.parent
         self.db = sqlite3.connect(path)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
@@ -81,6 +82,9 @@ class Store:
                     self.db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {declaration}")
         self.db.commit()
         self.db.execute("CREATE TABLE IF NOT EXISTS contact_exclusions (digest TEXT PRIMARY KEY)")
+        self.db.execute(
+            "CREATE TABLE IF NOT EXISTS recordings (id TEXT PRIMARY KEY, peer_id INTEGER, label TEXT, job_id INTEGER, created TEXT, state TEXT, filename TEXT DEFAULT '',incoming_filename TEXT DEFAULT '', duration REAL DEFAULT 0, attempts INTEGER DEFAULT 0,retry_after TEXT,last_error TEXT DEFAULT '')"
+        )
         self.db.commit()
 
     def add_reminder(self, title, due_at, repeat="none", mode="call"):
@@ -409,7 +413,11 @@ class Store:
         max_turns=4,
         duration_seconds=180,
     ):
-        if mode not in {"relay", "ask", "conversation"} or language not in {"uz", "en", "ru"}:
+        if mode not in {"relay", "ask", "conversation", "record"} or language not in {
+            "uz",
+            "en",
+            "ru",
+        }:
             raise ValueError("Qo'ng'iroq turi yoki tili noto'g'ri.")
         if (
             not isinstance(max_turns, int)
@@ -537,3 +545,90 @@ class Store:
                 "UPDATE outbound_calls SET state='cancelled',result='Topshiriq 10 daqiqadan ortiq eskirgan.' WHERE state='queued' AND COALESCE(due,created)<?",
                 ((utc_now() - timedelta(minutes=10)).isoformat(),),
             )
+
+    def start_recording(self, recording_id, peer_id, label, job_id):
+        with self.db:
+            self.db.execute(
+                "INSERT INTO recordings(id,peer_id,label,job_id,created,state) VALUES(?,?,?,?,?,'capturing')",
+                (recording_id, peer_id, str(label)[:200], job_id, utc_now().isoformat()),
+            )
+
+    def recording_captured(self, recording_id, duration):
+        with self.db:
+            self.db.execute(
+                "UPDATE recordings SET state='captured',duration=? WHERE id=?",
+                (duration, recording_id),
+            )
+
+    def recording_ready(self, recording_id, filename, incoming_filename, duration):
+        with self.db:
+            self.db.execute(
+                "UPDATE recordings SET state='ready',filename=?,incoming_filename=?,duration=?,last_error='' WHERE id=?",
+                (filename, incoming_filename, duration, recording_id),
+            )
+
+    def recording_failed(self, recording_id, error):
+        with self.db:
+            self.db.execute(
+                "UPDATE recordings SET state='failed',last_error=? WHERE id=?",
+                (error[:300], recording_id),
+            )
+
+    def pending_recordings(self, state):
+        return [
+            dict(r)
+            for r in self.db.execute(
+                "SELECT * FROM recordings WHERE state=? ORDER BY created LIMIT 50", (state,)
+            )
+        ]
+
+    def list_recordings(self):
+        return [
+            dict(r)
+            for r in self.db.execute("SELECT * FROM recordings ORDER BY created DESC LIMIT 30")
+        ]
+
+    def recover_recordings(self):
+        with self.db:
+            self.db.execute("UPDATE recordings SET state='captured' WHERE state='capturing'")
+            self.db.execute("UPDATE recordings SET state='ready' WHERE state='sending'")
+
+    def claim_recording(self):
+        with self.db:
+            row = self.db.execute(
+                "SELECT * FROM recordings WHERE state='ready' AND (retry_after IS NULL OR retry_after<=?) AND attempts<3 ORDER BY created LIMIT 1",
+                (utc_now().isoformat(),),
+            ).fetchone()
+            if row:
+                self.db.execute(
+                    "UPDATE recordings SET state='sending',attempts=attempts+1 WHERE id=?",
+                    (row["id"],),
+                )
+        return dict(row) if row else None
+
+    def recording_sent(self, recording_id):
+        with self.db:
+            self.db.execute(
+                "UPDATE recordings SET state='sent',last_error='' WHERE id=?", (recording_id,)
+            )
+
+    def recording_retry(self, recording_id, error):
+        with self.db:
+            self.db.execute(
+                "UPDATE recordings SET state=CASE WHEN attempts>=3 THEN 'failed' ELSE 'ready' END,retry_after=?,last_error=? WHERE id=?",
+                ((utc_now() + timedelta(minutes=2)).isoformat(), error[:200], recording_id),
+            )
+
+    def retry_recording(self, recording_id):
+        with self.db:
+            row = self.db.execute(
+                "SELECT filename,state FROM recordings WHERE id=?", (recording_id,)
+            ).fetchone()
+            if not row:
+                raise ValueError("Ovoz yozuvi topilmadi.")
+            state = "ready" if row["filename"] else "captured"
+            self.db.execute(
+                "UPDATE recordings SET state=?,attempts=0,retry_after=NULL WHERE id=?",
+                (state, recording_id),
+            )
+        return {"queued": True}

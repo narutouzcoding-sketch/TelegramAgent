@@ -2,6 +2,8 @@
 
 import asyncio
 import audioop
+import hashlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -42,7 +44,13 @@ class FreeSpeech:
             vad_filter=True,
             condition_on_previous_text=False,
         )
-        return " ".join(part.text.strip() for part in segments).strip()
+        return " ".join(
+            part.text.strip()
+            for part in segments
+            if getattr(part, "avg_logprob", 0) > -1.1
+            and getattr(part, "no_speech_prob", 0) < 0.8
+            and getattr(part, "compression_ratio", 0) < 2.5
+        ).strip()
 
     async def transcribe(self, path):
         def recognize_file():
@@ -71,13 +79,19 @@ class FreeSpeech:
         import edge_tts
 
         (ROOT / "data").mkdir(exist_ok=True)
+        voice = {"en": "en-US-JennyNeural", "ru": "ru-RU-SvetlanaNeural"}.get(
+            language, self.settings.free_tts_voice
+        )
+        cache = ROOT / "data" / "tts-cache"
+        cache.mkdir(exist_ok=True)
+        cached = cache / (hashlib.sha256((voice + "|" + text[:1800]).encode()).hexdigest() + ".ogg")
+        if cached.exists():
+            shutil.copyfile(cached, path)
+            return
         try:
             with tempfile.TemporaryDirectory(dir=ROOT / "data", prefix="tts-") as folder:
                 source = Path(folder) / "speech.mp3"
                 async with asyncio.timeout(45):
-                    voice = {"en": "en-US-JennyNeural", "ru": "ru-RU-SvetlanaNeural"}.get(
-                        language, self.settings.free_tts_voice
-                    )
                     await edge_tts.Communicate(text[:1800], voice).save(str(source))
                 process = await asyncio.create_subprocess_exec(
                     "ffmpeg",
@@ -108,6 +122,10 @@ class FreeSpeech:
                         await process.wait()
                 if code or not Path(path).exists() or not Path(path).stat().st_size:
                     raise RuntimeError("TTS conversion failed")
+                shutil.copyfile(path, cached)
+                files = sorted(cache.glob("*.ogg"), key=lambda p: p.stat().st_mtime)
+                for old in files[:-64]:
+                    old.unlink(missing_ok=True)
         except asyncio.CancelledError:
             raise
         except Exception:

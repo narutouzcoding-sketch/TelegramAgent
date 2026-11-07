@@ -22,6 +22,7 @@ def test_contact_call_tool_queues_once_and_never_claims_delivery(brain):
         enable_voice_calls=True,
         enable_contact_calls=True,
         allowed_call_user_ids=(77,),
+        record_calls=False,
     )
     arguments = json.dumps({"target": "@friend", "message": "Soat 18 da uchrashamiz."})
     first = brain.execute_tool("queue_contact_call", arguments, "relay-1")
@@ -90,12 +91,13 @@ async def test_bots_groups_and_assistant_account_cannot_be_recipients(store, ent
         await RecipientResolver(client, store, own_id=1).resolve("@target")
 
 
-async def test_relay_only_sends_after_answer_and_does_not_record_recipient(brain):
+async def test_relay_only_sends_after_answer_and_can_disable_recording(brain):
     brain.settings = replace(
         brain.settings,
         enable_voice_calls=True,
         enable_contact_calls=True,
         allowed_call_user_ids=(77,),
+        record_calls=False,
     )
     calls = SimpleNamespace(play=AsyncMock(), send_frame=AsyncMock(), leave_call=AsyncMock())
     app = SimpleNamespace(
@@ -121,6 +123,7 @@ async def test_recipient_hangup_is_not_marked_as_complete_message(brain):
         enable_voice_calls=True,
         enable_contact_calls=True,
         allowed_call_user_ids=(77,),
+        record_calls=False,
     )
     calls = SimpleNamespace(play=AsyncMock(), send_frame=AsyncMock(), leave_call=AsyncMock())
     app = SimpleNamespace(
@@ -162,6 +165,7 @@ async def test_explicit_call_command_is_restricted_to_owner(brain):
         enable_voice_calls=True,
         enable_contact_calls=True,
         allowed_call_user_ids=(77,),
+        record_calls=False,
     )
     app.store = brain.store
     app.send_text = AsyncMock()

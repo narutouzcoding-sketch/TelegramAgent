@@ -1,6 +1,18 @@
 # Mahalliy tekshiruv natijasi
 
-2026-11-07 kuni Windows muhitida bajarildi.
+2026-11-07–08 kunlari Windows muhitida bajarildi.
+
+## Oxirgi barqarorlik tekshiruvi — 2026-11-08
+
+149 ta test o'tdi (`-W error::RuntimeWarning`), Ruff, JavaScript, PowerShell parser va lock tekshiruvlari o'tdi. Yangi testlar asl PCM yozuvini AI dan ajratish, uzilgan yozuvni tiklash, haqiqiy FFmpeg OGG/Opus kodlash, faqat egasiga voice_note yuborish, fayllarni autentifikatsiya bilan berish, katalogdan tashqariga chiqishni rad etish, tokensiz yozib olish, past ovozdagi qisqa javob, 15 soniyadan uzun ovozni kesmaslik, oddiy hangup ni AI xatosi demaslik, navbatdagi xabarni yo'qotmaslik, to'liq transkriptlarni qayta tool kontekstiga yubormaslik, bitta yozish amali uchun bitta AI so'rovi, Gemini 429 da mahalliy model va Retry-After, ovozli sessiyada CPU modelni kutmaslik, native ASR va kvotada mahalliy zaxirani tekshiradi.
+
+Haqiqiy ovoz sifati tekshiruvida Whisper `small` sintetik o'zbekcha ikki jumlani buzib tanidi. Shu audio Gemini native audio orqali “Nonushtaga nima olib boray?” va “Ertaga soat 9 da menga kitob oqishni eslat.” deb tanildi (3.78 va 1.53 soniya). Bu ikki sintetik namuna; shovqinli haqiqiy telefon nutqining barcha holatlari isbotlanmagan.
+
+Ollama rasmiy winget paketi o'rnatildi. Birinchi `qwen3:4b` tegi thinking model bo'lib chiqdi; u ortiqcha reasoning sabab sekin yoki tugallanmagan javob berdi. Mos `qwen3:4b-instruct` tanlandi, rasmiy qatlamlar IPv4 orqali yuklanib SHA-256 tekshirildi. Yakuniy mahalliy sinovda “Salom!” 9.52 soniyada, reja qo'shish 10.69 soniyada bajarildi; Google so'rovi soni nol, vaqtinchalik bazada reja saqlandi. Tajriba thinking modeli tozalandi. Mahalliy fallback bepul, lekin CPU sabab sekinroq.
+
+Haqiqiy Telegram yetkazish sinovida “SINOV — haqiqiy qo'ng'iroq emas” deb belgilangan sintetik 9 soniyalik golos egasining chatiga yuborildi va baza `sent` holatini qayd etdi. U haqiqiy suhbatdoshning ovozi sifatida ko'rsatilmagan. Brauzerda shu fayl audio/ogg sifatida yuklandi, ijro etildi va 9.3905 soniya davomiylik ko'rsatdi. Har 5 soniyalik yangilash pleyerni yopib yuborishi topilib tuzatildi; tafsilotlar ochiq va ijro pozitsiyasi saqlangani tekshirildi.
+
+Yordamchi akkaunti Telegramga ulangan. Asl ovoz yozuvi, yangi ASR va mahalliy instruct modeli yoqilgan. Kalitlar, owner ID va mavjud kontaktlar saqlangan. Foydalanuvchidan yangi haqiqiy qo'ng'iroq bilan sinab ko'rish so'ralgan; bu yozuv tayyorlanayotganida tasdiq hali kelmagan. Quyidagi eski qaydlar o'z davridagi holatni tasvirlaydi.
 
 ## Web boshqaruv paneli
 
@@ -23,7 +35,7 @@ Panel avtomatik start tuzatishidan keyin haqiqiy brauzerda `Agent ishlayapti` ho
 - NTgCalls native DLL importi: muvaffaqiyatli.
 - 48 kHz mono PCM jonli jo'natish va qabul qilish konfiguratsiyalari: yaratildi.
 - `ruff check telegram_agent tests`: muvaffaqiyatli.
-- `python -m pytest -q`: **128 passed**. Panelning 14 ta testi `-W error` bilan ham o'tdi.
+- `python -m pytest -q`: **149 passed**. Panelning 14 ta testi `-W error` bilan ham o'tdi.
 - `uv lock --check`: muvaffaqiyatli.
 - Barcha PowerShell skriptlarining sintaksisi: tekshirildi.
 
