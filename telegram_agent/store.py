@@ -68,6 +68,9 @@ class Store:
                 "source": "TEXT NOT NULL DEFAULT 'manual'",
             },
             "outbound_calls": {
+                "answer_verified": "INTEGER NOT NULL DEFAULT 0",
+                "answer_evidence": "TEXT NOT NULL DEFAULT '[]'",
+                "question_delivered": "INTEGER NOT NULL DEFAULT 0",
                 "audio_id": "TEXT",
                 "delivery": "TEXT NOT NULL DEFAULT 'call'",
                 "collect_reply": "INTEGER NOT NULL DEFAULT 0",
@@ -86,6 +89,12 @@ class Store:
                 if name not in columns:
                     self.db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {declaration}")
         self.db.commit()
+        # Older versions treated raw audio/greetings as completed answers. Keep
+        # their recordings/history, but do not present unverified results as success.
+        with self.db:
+            self.db.execute(
+                "UPDATE outbound_calls SET state=CASE WHEN mode='record' THEN 'recorded_unverified' ELSE 'answer_unverified' END,result='Oldingi natijada savolga javob olingani tekshirilmagan.',summary='Javob tasdiqlanmagan. ' || COALESCE(summary,'') WHERE state='completed' AND answer_verified=0"
+            )
         message_columns = {r[1] for r in self.db.execute("PRAGMA table_info(messages)")}
         if "private" not in message_columns:
             self.db.execute("ALTER TABLE messages ADD COLUMN private INTEGER NOT NULL DEFAULT 0")
@@ -649,7 +658,18 @@ class Store:
         return dict(row) if row else None
 
     def finish_contact_call(self, job_id, state, result):
-        if state not in {"sent", "failed", "cancelled", "interrupted", "completed", "no_answer"}:
+        if state not in {
+            "sent",
+            "failed",
+            "cancelled",
+            "interrupted",
+            "completed",
+            "no_answer",
+            "recorded_unverified",
+            "answer_unverified",
+            "partial_answer",
+            "declined",
+        }:
             raise ValueError("Noto'g'ri qo'ng'iroq holati")
         with self.db:
             self.db.execute(
@@ -657,11 +677,27 @@ class Store:
                 (state, result[:200], job_id),
             )
 
-    def save_contact_report(self, job_id, transcript, summary):
+    def save_contact_report(
+        self,
+        job_id,
+        transcript,
+        summary,
+        *,
+        answer_verified=False,
+        answer_evidence=(),
+        question_delivered=False,
+    ):
         with self.db:
             self.db.execute(
-                "UPDATE outbound_calls SET transcript=?,summary=? WHERE id=?",
-                (json.dumps(transcript[:22], ensure_ascii=False), summary[:6000], job_id),
+                "UPDATE outbound_calls SET transcript=?,summary=?,answer_verified=?,answer_evidence=?,question_delivered=? WHERE id=?",
+                (
+                    json.dumps(transcript[:22], ensure_ascii=False),
+                    summary[:6000],
+                    int(bool(answer_verified)),
+                    json.dumps(list(answer_evidence)[:10], ensure_ascii=False),
+                    int(bool(question_delivered)),
+                    job_id,
+                ),
             )
 
     def recover_contact_calls(self):
@@ -714,7 +750,9 @@ class Store:
     def list_recordings(self):
         return [
             dict(r)
-            for r in self.db.execute("SELECT * FROM recordings ORDER BY created DESC LIMIT 30")
+            for r in self.db.execute(
+                "SELECT r.*,c.state AS task_state,c.answer_verified,c.message AS question FROM recordings r LEFT JOIN outbound_calls c ON c.id=r.job_id ORDER BY r.created DESC LIMIT 30"
+            )
         ]
 
     def recover_recordings(self):

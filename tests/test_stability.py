@@ -113,7 +113,8 @@ async def test_record_mode_never_calls_gemini_or_whisper(monkeypatch):
             voice.accept_pcm48(frame)
         await asyncio.wait_for(voice.closed.wait(), 3)
         assert task.recorded_answer and task.finished
-        assert "Matn tanish" in await task.summary()
+        assert "tasdiqlanmadi" in await task.summary()
+        assert task.result_state() == "recorded_unverified"
         brain.gemini.create.assert_not_called()
         speech.prepare.assert_not_called()
         speech.transcribe_pcm48.assert_not_called()

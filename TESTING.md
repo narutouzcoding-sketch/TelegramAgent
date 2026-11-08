@@ -2,6 +2,10 @@
 
 2026-11-07–08 kunlari Windows muhitida bajarildi.
 
+## Savolga javobni tekshirish — 2026-11-08
+
+237 ta testli yakuniy to‘plam; yangi 33 ta javob/natija regressiyasi. Real Gemini bilan sun’iy misolda salom → javobsiz, bitta qism → qisman, qolgan qism → dalilli javob holatlari tasdiqlandi. Bu haqiqiy kontakt javobi emas. [Batafsil](ANSWER_FIX.md).
+
 ## Asl ovoz va hujjatlar — yakuniy tekshiruv
 
 `qa.ps1`: **204 passed**, 0 failure/error/skipped. Yangi 25 ta regressiya, shu jumladan 5 ta mikrofon holatining Node sinovi, haqiqiy FFmpeg OGG, private hujjatning cloud/TTS ga chiqmasligi, PDF/DOCX, backup poygasi va owner outbox tekshirildi. Brauzerda sintetik audio yuklash/saqlash/topshiriq, mahalliy qidiruv/qayd va backup havolasi ishladi. Haqiqiy qurilma mikrofoni va inson bilan native Telegram qo‘ng‘irog‘i bu natijaga kirmaydi. Tafsilotlar [FEATURES.md](FEATURES.md).

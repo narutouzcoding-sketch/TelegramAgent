@@ -291,23 +291,37 @@ async def execute_job(app, job):
             if isinstance(exc, ValueError)
             else type(exc).__name__
         )
-        app.store.finish_contact_call(job["id"], "failed", reason)
+        state = "failed"
         if task is not None:
-            answers = [row["content"] for row in task.transcript if row["role"] == "user"]
-            if answers:
-                summary = "Suhbat uzildi. Qisman tanilgan javob: " + " / ".join(answers)[:2500]
-                app.store.remember("assistant", f"Qo'ng'iroq #{job['id']}\n{summary}")
+            summary = await task.summary()
+            if task.result_state() in {"completed", "partial_answer", "declined"}:
+                state = task.result_state()
+            app.store.save_contact_report(
+                job["id"],
+                task.transcript,
+                summary,
+                answer_verified=task.answer_verified,
+                answer_evidence=[*task.partial_evidence, *task.evidence],
+                question_delivered=task.question_delivered,
+            )
+        app.store.finish_contact_call(job["id"], state, reason)
         await notify_owner(
             app,
-            f"Qo'ng'iroq #{job['id']} yakunlanmadi: {reason[:200]}. Qayta terilmadi."
-            + ("\n" + summary if summary else ""),
+            f"Qo'ng'iroq #{job['id']}: texnik holat — {reason[:200]}. Qayta terilmadi."
+            + ("\n" + summary if summary else "\nSavolga javob olingani tasdiqlanmadi."),
         )
+
     else:
         if task is not None:
-            answered = task.recorded_answer or any(row["role"] == "user" for row in task.transcript)
-            app.store.finish_contact_call(
-                job["id"], "completed" if answered else "no_answer", summary
+            app.store.save_contact_report(
+                job["id"],
+                task.transcript,
+                summary,
+                answer_verified=task.answer_verified,
+                answer_evidence=[*task.partial_evidence, *task.evidence],
+                question_delivered=task.question_delivered,
             )
+            app.store.finish_contact_call(job["id"], task.result_state(), summary)
             report = f"Qo'ng'iroq #{job['id']} — {job['target']}\n{summary}"
             await notify_owner(app, report)
             return
@@ -325,6 +339,9 @@ async def execute_job(app, job):
                 job["id"],
                 task.transcript,
                 summary or "Suhbat yakunlanmadi; quyidagi yozuv qisman bo'lishi mumkin.",
+                answer_verified=task.answer_verified,
+                answer_evidence=[*task.partial_evidence, *task.evidence],
+                question_delivered=task.question_delivered,
             )
 
 

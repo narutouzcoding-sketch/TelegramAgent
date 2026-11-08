@@ -102,7 +102,9 @@ class FreeVoiceSession:
             await self.speak_pcm(self.brain.greeting_pcm)
         else:
             await self.speak(self.introduction)
-        self.accepting = True
+        if not self.closed.is_set():
+            self.brain.question_delivered = True
+            self.accepting = True
 
     async def respond(self, text):
         try:
@@ -112,8 +114,8 @@ class FreeVoiceSession:
             self.record_only = True
             if hasattr(self.brain, "record_only"):
                 self.brain.record_only = True
-                if any(row.get("role") == "user" for row in getattr(self.brain, "transcript", [])):
-                    self.brain.recorded_answer = self.brain.finished = True
+                self.brain.finished = True
+                self.brain.outcome = "answer_unverified"
             language = getattr(self.brain, "language", "uz")
             reply = {
                 "uz": "AI hozir javob bera olmadi. Asl ovozingiz yoziladi va chatga yuboriladi.",

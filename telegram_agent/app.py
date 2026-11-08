@@ -235,7 +235,7 @@ class AgentApp:
                 await self.calls.leave_call(chat_id)
             return
         self.call_event("incoming_received")
-        self.spawn(self.safe_call("Salom! Men AI yordamchingizman. Suhbatni boshlang."))
+        self.spawn(self.safe_call("Salom, eshitaman."))
 
     def receive_audio(self, update):
         recording = getattr(self, "active_recording", None)
@@ -453,7 +453,7 @@ class AgentApp:
             if self.call_lock.locked():
                 await self.send_text("Qo'ng'iroq allaqachon faol.")
             else:
-                self.spawn(self.safe_call("Salom! Men AI yordamchingizman. Qanday yordam beray?"))
+                self.spawn(self.safe_call("Salom, eshitaman."))
             return
         if command in {"/help", "/start"}:
             await self.send_text(

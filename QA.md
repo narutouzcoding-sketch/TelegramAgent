@@ -4,7 +4,7 @@
 
 ## Oxirgi qo‘shimchalar
 
-Asl ovoz, shaxsiy hujjatlar, zaxira va natijalar navbati qo‘shilgach **204 ta test o‘tdi**. Joriy to‘liq hisobot [FEATURES.md](FEATURES.md) da. Quyidagi 20 ssenariy matritsasi va 179 testli audit oldingi bosqichning qaydi.
+Javob olinmagan suhbatni muvaffaqiyat deb ko‘rsatish tuzatildi: **237 ta test o‘tdi**. Dalil, qisman javob va tasdiqlanmagan ovoz holatlari [ANSWER_FIX.md](ANSWER_FIX.md) da. Asl ovoz, hujjatlar va zaxira bosqichining 204 testli hisoboti [FEATURES.md](FEATURES.md) da. Quyidagi 20 ssenariy matritsasi va 179 testli audit oldingi bosqichning qaydi.
 
 ## Natija va sinov chegarasi
 

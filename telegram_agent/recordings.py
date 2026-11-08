@@ -148,17 +148,14 @@ async def run_recordings(app):
                 / (row["incoming_filename"] or row["filename"])
             )
             try:
-                caption = f"Qo'ng'iroq yozuvi: {row['label']}\n" + (
-                    "Suhbatdoshning asl ovozi. Matn AI tomonidan xato tanilgan bo'lishi mumkin."
-                    if row["incoming_filename"]
-                    else "Faqat agent ovozi yozilgan; suhbatdosh ovozi olinmagan."
-                )
+                caption = recording_caption(app.store, row)
                 await app.policy.send(
                     lambda: app.telegram.send_file(
                         app.owner,
                         str(path),
                         voice_note=True,
                         caption=caption,
+                        parse_mode=None,
                         attributes=[
                             DocumentAttributeAudio(
                                 duration=max(1, math.ceil(row["duration"])), voice=True
@@ -176,3 +173,29 @@ async def run_recordings(app):
                 )
                 log.warning("Recording delivery failed type=%s", type(exc).__name__)
         await asyncio.sleep(1)
+
+
+def recording_caption(store, row):
+    caption = f"Qo'ng'iroq yozuvi: {row['label']}\n"
+    if row.get("job_id"):
+        task = store.db.execute(
+            "SELECT state,message,answer_verified FROM outbound_calls WHERE id=?", (row["job_id"],)
+        ).fetchone()
+        if task:
+            caption += "Savol/vazifa: " + task["message"][:250] + "\n"
+            if task["state"] == "running":
+                caption += "Javob holati hali tekshirilmoqda.\n"
+            elif task["state"] == "partial_answer":
+                caption += "Faqat qisman javob aniqlandi.\n"
+            elif task["state"] == "declined":
+                caption += "Suhbatdosh javob berishni rad etdi.\n"
+            elif task["answer_verified"]:
+                caption += "Savolga tegishli tanilgan javob aniqlandi.\n"
+            else:
+                caption += "Savolga javob olingani tasdiqlanmagan. Bu faqat audio yozuv.\n"
+    caption += (
+        "Kiruvchi kanalning asl yozuvi; matn tanishda xato bo'lishi mumkin."
+        if row["incoming_filename"]
+        else "Faqat agent ovozi; suhbatdosh ovozi olinmagan."
+    )
+    return caption[:950]

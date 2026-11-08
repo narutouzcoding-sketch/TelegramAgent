@@ -234,8 +234,9 @@ async def test_uat_18_unexpected_model_json_finishes_safely():
             fake, "Owner", {"message": "Savol?", "mode": "conversation", "language": "uz"}
         )
         task.generate = AsyncMock(return_value=raw)
-        assert "Rahmat" in await task.answer("Javob")
+        assert "javob ololmadim" in await task.answer("Javob")
         assert task.finished
+        assert task.result_state() == "answer_unverified"
 
 
 async def test_uat_19_transport_disconnect_visible_to_user(ui):
