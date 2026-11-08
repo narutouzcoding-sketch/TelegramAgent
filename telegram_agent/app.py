@@ -40,6 +40,7 @@ HELP = """Men shaxsiy AI yordamchingizman. O'zbekcha yozing, ovozli xabar yubori
 /calls — topshirilgan qo'ng'iroqlar holati
 /cancelcall ID — navbatdagi qo'ng'iroqni bekor qilish
 /status — holat
+/usage — bugungi saqlangan Gemini token sarfi (AI so'rovisiz)
 /help — yordam
 
 Misol: «Ertaga 09:00 da dars qilishimni qo'ng'iroq qilib eslat.»
@@ -101,6 +102,10 @@ class AgentApp:
             self.policy.ensure_active()
             await self._run()
         finally:
+            self.ready.clear()
+            if self.calls is not None:
+                with suppress(Exception):
+                    await self.calls.stop()
             await self.telegram.disconnect()
             await self.brain.close()
             self.store.close()
@@ -138,13 +143,14 @@ class AgentApp:
             if self.settings.enable_voice_calls:
                 await self._start_call_transport(me.id)
             scheduler = Scheduler(self.store, self.deliver, self.settings.reminder_grace_hours)
+            self.store.recover_reminders(all_inflight=True)
             self.scheduler_task = asyncio.create_task(scheduler.run())
             from .recordings import run_recordings
 
-            self.spawn(run_recordings(self))
+            recordings_task = asyncio.create_task(run_recordings(self))
             from .notifications import run_notifications
 
-            self.spawn(run_notifications(self))
+            notifications_task = asyncio.create_task(run_notifications(self))
             if self.settings.enable_voice_calls:
                 self.contact_queue_task = asyncio.create_task(run_queue(self))
             log.info("Agent started; owner allowlist active")
@@ -167,6 +173,8 @@ class AgentApp:
                     for task in [
                         self.scheduler_task,
                         self.contact_queue_task,
+                        recordings_task,
+                        notifications_task,
                         disconnected,
                         restricted,
                     ]
@@ -175,15 +183,26 @@ class AgentApp:
                 return_when=asyncio.FIRST_COMPLETED,
             )
             for task in done:
-                task.result()
+                try:
+                    task.result()
+                except TelegramPaused:
+                    raise
+                except Exception as exc:
+                    raise ConnectionError(
+                        "Yetkazish jarayoni uzildi: " + type(exc).__name__
+                    ) from None
             if restricted in done:
                 raise TelegramPaused(self.policy.reason)
+            raise ConnectionError("Telegram ulanishi yoki yetkazish jarayoni to'xtadi.")
         finally:
             workers = [
                 task for task in [self.scheduler_task, self.contact_queue_task] if task is not None
             ]
             if "restricted" in locals():
                 workers.append(restricted)
+            for name in ("recordings_task", "notifications_task"):
+                if name in locals():
+                    workers.append(locals()[name])
             for worker in workers:
                 worker.cancel()
             await asyncio.gather(*workers, return_exceptions=True)
@@ -419,11 +438,14 @@ class AgentApp:
         text = f"Eslatma #{row['id']}: {row['title']}\nVaqti: {when:%Y-%m-%d %H:%M}"
         if late:
             text += "\nDastur ishlamay turgani sabab bu eslatma kechikdi."
+        if row.get("recovery_message_only"):
+            text += "\nOldingi yetkazish uzilgan; ushbu eslatma xabar bilan tiklandi. Qayta qo'ng'iroq qilinmadi."
         # A durable chat copy is useful even when the owner answers the call.
         await self.send_text(text)
         if (
             self.settings.enable_voice_calls
             and row["mode"] == "call"
+            and not row.get("recovery_message_only")
             and not late
             and not self.call_lock.locked()
         ):
@@ -531,7 +553,7 @@ class AgentApp:
             rows = self.store.list_reminders()
             await self.send_text(
                 "\n".join(
-                    f"#{r['id']} {r['title']} — {r['due_local']} ({r['repeat']}, {r['mode']})"
+                    f"#{r['id']} {r['title']} — {r['due_local']} ({r['repeat']}, {r['mode']}, {r['state']})"
                     for r in rows
                 )
                 or "Kutilayotgan eslatma yo'q."

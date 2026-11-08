@@ -72,7 +72,7 @@ def test_three_failures_become_failed(store):
         now = due + timedelta(minutes=step)
         row = store.claim_due(now=now)
         store.finish(row, error="network", now=now)
-    assert store.list_reminders() == []
+    assert store.list_reminders()[0]["state"] == "failed"
     assert store.db.execute("SELECT state FROM reminders").fetchone()[0] == "failed"
 
 

@@ -102,7 +102,9 @@ class Brain:
         self.settings = settings
         self.store = store
         self.ai = AIClientPool(settings)
-        self.gemini = GeminiText(settings) if settings.resolved_text_provider == "gemini" else None
+        self.gemini = (
+            GeminiText(settings, store) if settings.resolved_text_provider == "gemini" else None
+        )
         self.use_native_asr = bool(self.gemini and settings.gemini_audio_asr)
         self.last_asr = "Kutilyapti"
         self.lock = asyncio.Lock()
@@ -262,7 +264,16 @@ class Brain:
             "list_contacts": ("name", "reference"),
             "search_contacts": ("name", "reference"),
             "list_plans": ("id", "title", "details"),
-            "list_reminders": ("id", "title", "due_local", "mode", "repeat"),
+            "list_reminders": (
+                "id",
+                "title",
+                "due_local",
+                "mode",
+                "repeat",
+                "state",
+                "last_error",
+                "delivery_status",
+            ),
         }.get(name)
         if fields:
             return {
@@ -311,6 +322,15 @@ class Brain:
 
     async def answer(self, text, allow_local=True):
         async with self.lock:
+            local = text.strip().casefold()
+            if (
+                local in {"/usage", "token sarfi", "tokenlar sarfi"}
+                and self.gemini
+                and getattr(self.gemini, "ledger", None)
+            ):
+                daily = self.gemini.ledger.summary()
+                used = daily["providers"].get("gemini", {})
+                return f"Bugungi Gemini sarfi ({daily['day']}, {daily['timezone']}): {used.get('requests', 0)} so'rov; kirish {used.get('input_tokens', 0)}, chiqish {used.get('output_tokens', 0)} token. Sarfi tasdiqlanmagan so'rovlar: {used.get('unknown_usage', 0)}. Bu Google hisobidagi qolgan kvota emas."
             if not any(
                 w in text.casefold()
                 for w in ("eslat", "rejamga", "qo'sh", "qosh", "qo‘sh", "remind")

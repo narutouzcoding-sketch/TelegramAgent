@@ -1,0 +1,26 @@
+[Unit]
+Description=TelegramAgent private panel and supervised worker
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=telegram-agent
+Group=telegram-agent
+WorkingDirectory=/opt/telegram-agent
+ExecStart=/opt/telegram-agent/.venv/bin/python -m telegram_agent panel --host 127.0.0.1 --port 8765
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=30
+KillSignal=SIGTERM
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONUTF8=1
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

@@ -6,11 +6,12 @@ import hmac
 import json
 import logging
 import secrets
+import sqlite3
 import time
 from dataclasses import replace
 from pathlib import Path
 
-from aiohttp import web
+from aiohttp import ClientError, web
 from openai import APIError
 from telethon import errors
 
@@ -38,6 +39,9 @@ class PanelControl:
         self.settings, self.root, self.agent_factory = settings, root, agent_factory
         (root / "data").mkdir(parents=True, exist_ok=True)
         self.store = Store(root / "data" / "agent.sqlite3", settings.timezone)
+        from .usage import UsageLedger
+
+        self.usage_ledger = UsageLedger(self.store, settings)
         self.idle_brain = None
         self.agent = self.task = None
         self.phase, self.last_error = "stopped", ""
@@ -53,6 +57,8 @@ class PanelControl:
         self.upload_lock = asyncio.Lock()
         self.backup_lock = asyncio.Lock()
         self.shutdown = asyncio.Event()
+        self.reconnect_attempts = 0
+        self.retry_delays = (2, 5, 15, 30, 60)
 
     @property
     def running(self):
@@ -78,33 +84,77 @@ class PanelControl:
             cfg = self.runtime_settings()
             self.agent.settings = self.agent.policy.settings = self.agent.brain.settings = cfg
 
-    async def start(self):
+    async def start(self, manual=True):
         async with self.control_lock:
             if self.running:
                 return {"started": False, "already_running": True}
+            if not manual and self.store.telegram_state("agent_desired") == "stopped":
+                return {"started": False, "manual_stop": True}
+            if manual:
+                # Explicit owner start allows one account-health check. A new
+                # Telegram restriction will latch again before further actions.
+                self.store.set_telegram_state("restriction_latch", "")
+                self.store.set_telegram_state("agent_desired", "running")
             self.agent = self.agent_factory(self.runtime_settings())
             self.phase, self.last_error = "connecting", ""
             self.task = asyncio.create_task(self._run_agent())
             return {"started": True}
 
     async def _run_agent(self):
-        try:
-            await self.agent.run()
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            self.phase = "error"
-            self.last_error = (
-                str(exc)
-                if isinstance(exc, (ValueError, AIUnavailable))
-                else "Agent ishga tushmadi: " + type(exc).__name__
-            )
-            log.warning("Panel agent failed type=%s", type(exc).__name__)
-        else:
-            self.phase = "stopped"
+        recreate = False
+        while True:
+            began = time.monotonic()
+            try:
+                if recreate:
+                    self.agent = self.agent_factory(self.runtime_settings())
+                await self.agent.run()
+            except asyncio.CancelledError:
+                raise
+            except (
+                ConnectionError,
+                OSError,
+                TimeoutError,
+                ClientError,
+                sqlite3.OperationalError,
+            ) as exc:
+                if self.store.telegram_state("restriction_latch"):
+                    self.phase, self.last_error = (
+                        "error",
+                        "Telegram cheklovi: qo'lda tekshirish kerak.",
+                    )
+                    return
+                if time.monotonic() - began > 60:
+                    self.reconnect_attempts = 0
+                delay = self.retry_delays[min(self.reconnect_attempts, len(self.retry_delays) - 1)]
+                self.reconnect_attempts += 1
+                self.phase, self.last_error = (
+                    "reconnecting",
+                    "Ulanish vaqtincha uzildi: " + type(exc).__name__,
+                )
+                log.warning(
+                    "Agent reconnect attempt=%s type=%s",
+                    self.reconnect_attempts,
+                    type(exc).__name__,
+                )
+                await asyncio.sleep(delay)
+                recreate = True
+            except Exception as exc:
+                self.phase = "error"
+                self.last_error = (
+                    str(exc)
+                    if isinstance(exc, (ValueError, AIUnavailable))
+                    else "Agent ishga tushmadi: " + type(exc).__name__
+                )
+                log.warning("Panel agent failed type=%s", type(exc).__name__)
+                return
+            else:
+                self.phase = "stopped"
+                return
 
-    async def stop(self):
+    async def stop(self, manual=True):
         async with self.control_lock:
+            if manual:
+                self.store.set_telegram_state("agent_desired", "stopped")
             if self.running:
                 self.task.cancel()
                 await asyncio.gather(self.task, return_exceptions=True)
@@ -290,6 +340,8 @@ class PanelControl:
 
     def state(self):
         phase = "running" if self.connected else self.phase
+        if self.connected:
+            self.phase, self.last_error = "running", ""
         if self.running and self.agent.ready.is_set() and not self.connected:
             phase = "reconnecting"
         cfg = self.runtime_settings()
@@ -315,7 +367,9 @@ class PanelControl:
                 "asr_provider": getattr(brain, "last_asr", "Kutilyapti"),
                 "ai_status": adapter.status()
                 if adapter is not None and hasattr(adapter, "status")
-                else None,
+                else {"daily": self.usage_ledger.summary()},
+                "reconnect_attempts": self.reconnect_attempts,
+                "telegram_restricted": bool(self.store.telegram_state("restriction_latch")),
             },
             "plans": self.store.list_plans(),
             "reminders": self.store.list_reminders(),
@@ -329,7 +383,7 @@ class PanelControl:
         }
 
     async def close(self):
-        await self.stop()
+        await self.stop(manual=False)
         if self.idle_brain:
             await self.idle_brain.close()
         for path, _ in self.audio.values():
@@ -494,7 +548,7 @@ def create_panel(control, password, password_path=None):
             response.del_cookie("ta_session")
             return response
         elif action == "start":
-            result = await control.start()
+            result = await control.start(manual=True)
         elif action == "stop":
             result = await control.stop()
         elif action == "shutdown":
@@ -601,6 +655,8 @@ def create_panel(control, password, password_path=None):
             result = control.store.cancel_contact_call(int(data["id"]))
         elif action == "retry-recording":
             result = control.store.retry_recording(data["id"])
+        elif action == "retry-reminder":
+            result = control.store.retry_reminder(int(data["id"]))
         elif action == "call-owner":
             agent = control.require_agent()
             if not agent.settings.enable_voice_calls:
@@ -712,6 +768,15 @@ def create_panel(control, password, password_path=None):
 
 
 async def serve_panel(settings, host="127.0.0.1", port=8765):
+    from logging.handlers import RotatingFileHandler
+
+    (ROOT / "logs").mkdir(exist_ok=True)
+    handler = RotatingFileHandler(
+        ROOT / "logs" / "panel.log", maxBytes=1_000_000, backupCount=3, encoding="utf-8"
+    )
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+    logging.getLogger().addHandler(handler)
+    logging.getLogger().setLevel(logging.WARNING)
     (ROOT / "data").mkdir(exist_ok=True)
     path = ROOT / "data" / "panel-password.txt"
     if not path.exists():
@@ -724,10 +789,17 @@ async def serve_panel(settings, host="127.0.0.1", port=8765):
     runner = web.AppRunner(create_panel(control, password, path), access_log=None)
     try:
         await runner.setup()
+        import signal
+
+        for sig in (signal.SIGTERM,):
+            try:
+                asyncio.get_running_loop().add_signal_handler(sig, control.shutdown.set)
+            except (NotImplementedError, RuntimeError):
+                pass
         await web.TCPSite(runner, host, port).start()
         # Opening the control panel should also bring the Telegram worker online.
         # Keep the HTTP server available even if Telegram login needs attention.
-        await control.start()
+        await control.start(manual=False)
         print(f"Boshqaruv paneli: http://127.0.0.1:{port}", flush=True)
         print(
             "Panel paroli: data/panel-password.txt faylida. API kalitlari panelga chiqarilmaydi.",
@@ -741,3 +813,5 @@ async def serve_panel(settings, host="127.0.0.1", port=8765):
         await control.shutdown.wait()
     finally:
         await runner.cleanup()
+        logging.getLogger().removeHandler(handler)
+        handler.close()

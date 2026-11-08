@@ -30,6 +30,9 @@ class Store:
         self.db = sqlite3.connect(path)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
+        self.db.execute(
+            "CREATE TABLE IF NOT EXISTS reminder_failures (id INTEGER PRIMARY KEY,reminder_id INTEGER NOT NULL,due TEXT NOT NULL,error TEXT NOT NULL,created TEXT NOT NULL)"
+        )
         self.db.executescript("""
           CREATE TABLE IF NOT EXISTS reminders (
             id INTEGER PRIMARY KEY, title TEXT NOT NULL, due TEXT NOT NULL,
@@ -62,6 +65,7 @@ class Store:
         """)
         # Additive migrations keep existing reminders, contacts and call history intact.
         for table, additions in {
+            "reminders": {"recovery_message_only": "INTEGER NOT NULL DEFAULT 0"},
             "contacts": {
                 "telegram_id": "INTEGER",
                 "call_allowed": "INTEGER NOT NULL DEFAULT 0",
@@ -132,7 +136,7 @@ class Store:
 
     def list_reminders(self):
         rows = self.db.execute(
-            "SELECT * FROM reminders WHERE state IN ('pending','delivering') ORDER BY due LIMIT 100"
+            "SELECT * FROM reminders WHERE state IN ('pending','delivering','failed') ORDER BY due LIMIT 100"
         ).fetchall()
         return [
             dict(row)
@@ -147,19 +151,34 @@ class Store:
     def cancel_reminder(self, reminder_id):
         with self.db:
             n = self.db.execute(
-                "UPDATE reminders SET state='cancelled' WHERE id=? AND state IN ('pending','delivering')",
+                "UPDATE reminders SET state='cancelled' WHERE id=? AND state IN ('pending','delivering','failed')",
                 (reminder_id,),
             ).rowcount
         return {"cancelled": bool(n), "id": reminder_id}
 
+    def retry_reminder(self, reminder_id):
+        with self.db:
+            changed = self.db.execute(
+                "UPDATE reminders SET state='pending',recovery_message_only=1,attempts=0,retry_after=NULL,last_error=NULL,lease_until=NULL WHERE id=? AND state='failed'",
+                (reminder_id,),
+            ).rowcount
+        if not changed:
+            raise ValueError("Qayta yuborish uchun xatoli eslatma topilmadi.")
+        return {"queued": True, "id": reminder_id, "mode": "message"}
+
+    def recover_reminders(self, now=None, all_inflight=False):
+        now = now or utc_now()
+        with self.db:
+            self.db.execute(
+                "UPDATE reminders SET state='pending',recovery_message_only=1,attempts=0,lease_until=NULL,retry_after=NULL,last_error='Oldingi yetkazish uzilgan; yetkazilgani tasdiqlanmagan.' WHERE state='delivering' AND (? OR lease_until<=?)",
+                (int(all_inflight), now.isoformat()),
+            )
+
     def claim_due(self, now=None):
         now = now or utc_now()
         # A lease allows recovery after an interrupted delivery. Run only one agent process.
+        self.recover_reminders(now)
         with self.db:
-            self.db.execute(
-                "UPDATE reminders SET state='pending' WHERE state='delivering' AND lease_until<=?",
-                (now.isoformat(),),
-            )
             row = self.db.execute(
                 "SELECT * FROM reminders WHERE state='pending' AND due<=? "
                 "AND (retry_after IS NULL OR retry_after<=?) ORDER BY due LIMIT 1",
@@ -179,15 +198,30 @@ class Store:
             current = self.db.execute(
                 "SELECT state FROM reminders WHERE id=?", (row["id"],)
             ).fetchone()
-            if current is None or current["state"] == "cancelled":
+            if current is None or current["state"] != "delivering":
                 return
             if error:
                 attempts = row["attempts"] + 1
+                if attempts >= 3:
+                    self.db.execute(
+                        "INSERT INTO reminder_failures(reminder_id,due,error,created) VALUES(?,?,?,?)",
+                        (row["id"], row["due"], error[:120], now.isoformat()),
+                    )
+                if attempts >= 3 and row["repeat"] != "none":
+                    due = datetime.fromisoformat(row["due"]).astimezone(ZoneInfo(self.timezone))
+                    step = timedelta(days=1 if row["repeat"] == "daily" else 7)
+                    while due.astimezone(UTC) <= now:
+                        due += step
+                    self.db.execute(
+                        "UPDATE reminders SET state='pending',due=?,attempts=0,lease_until=NULL,retry_after=NULL,recovery_message_only=0,last_error=?,delivery_status='previous_occurrence_failed' WHERE id=?",
+                        (due.astimezone(UTC).isoformat(), error[:120], row["id"]),
+                    )
+                    return
                 state = "failed" if attempts >= 3 else "pending"
                 retry_at = now + timedelta(minutes=2 * attempts)
                 self.db.execute(
-                    "UPDATE reminders SET state=?,retry_after=?,last_error=?,lease_until=NULL WHERE id=?",
-                    (state, retry_at.isoformat(), error[:120], row["id"]),
+                    "UPDATE reminders SET state=?,retry_after=?,last_error=?,lease_until=NULL,recovery_message_only=CASE WHEN ?='interrupted' THEN 1 ELSE recovery_message_only END WHERE id=?",
+                    (state, retry_at.isoformat(), error[:120], error, row["id"]),
                 )
             elif row["repeat"] == "none":
                 self.db.execute(
@@ -201,7 +235,7 @@ class Store:
                     due += step
                 self.db.execute(
                     "UPDATE reminders SET state='pending',due=?,attempts=0,lease_until=NULL,"
-                    "last_error=NULL,retry_after=NULL,delivery_status=? WHERE id=?",
+                    "last_error=NULL,retry_after=NULL,recovery_message_only=0,delivery_status=? WHERE id=?",
                     (due.astimezone(UTC).isoformat(), delivery_status, row["id"]),
                 )
 
@@ -245,7 +279,7 @@ class Store:
             raise ValueError("Noto'g'ri repeat yoki mode.")
         with self.db:
             count = self.db.execute(
-                "UPDATE reminders SET title=?,due=?,repeat=?,mode=?,attempts=0,retry_after=NULL,last_error=NULL WHERE id=? AND state='pending'",
+                "UPDATE reminders SET state='pending',recovery_message_only=0,title=?,due=?,repeat=?,mode=?,attempts=0,retry_after=NULL,last_error=NULL WHERE id=? AND state IN ('pending','failed')",
                 (title, due.isoformat(), repeat, mode, reminder_id),
             ).rowcount
         if not count:
@@ -765,7 +799,9 @@ class Store:
     def recover_recordings(self):
         with self.db:
             self.db.execute("UPDATE recordings SET state='captured' WHERE state='capturing'")
-            self.db.execute("UPDATE recordings SET state='ready' WHERE state='sending'")
+            self.db.execute(
+                "UPDATE recordings SET state=CASE WHEN attempts>=3 THEN 'failed' ELSE 'ready' END,last_error='Yuborish uzilgan; yetkazilgani tasdiqlanmagan. Qayta yuborishda nusxa kelishi mumkin.' WHERE state='sending'"
+            )
 
     def claim_recording(self):
         with self.db:

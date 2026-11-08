@@ -128,6 +128,7 @@ async def test_text_mode_starts_without_call_transport(brain, monkeypatch):
     app.scheduler_task = app.contact_queue_task = None
     app.background_tasks = set()
     app.hangup = AsyncMock()
-    await app._run()
+    with pytest.raises(ConnectionError, match="ulanishi"):
+        await app._run()
     app._start_call_transport.assert_not_called()
     assert app.contact_queue_task is None

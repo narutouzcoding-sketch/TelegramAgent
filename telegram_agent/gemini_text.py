@@ -1,7 +1,9 @@
 """Gemini text/tool and native audio adapter using Google's documented OpenAI-compatible endpoint."""
 
+import asyncio
 import base64
 import time
+from datetime import datetime, timedelta, timezone
 
 from openai import APIError, AsyncOpenAI
 
@@ -9,7 +11,7 @@ from .ai_access import AIUnavailable
 
 
 class GeminiText:
-    def __init__(self, settings):
+    def __init__(self, settings, store=None):
         self.settings = settings
         self.client = AsyncOpenAI(
             api_key=settings.gemini_key,
@@ -21,6 +23,17 @@ class GeminiText:
 
         self.local = LocalText(settings) if settings.local_fallback_enabled else None
         self.cooldown_until = 0
+        self.ledger = None
+        self.store = store
+        if store is not None:
+            from .usage import UsageLedger
+
+            self.ledger = UsageLedger(store, settings)
+            value = store.telegram_state("gemini_cooldown_until")
+            if value:
+                self.cooldown_until = time.monotonic() + max(
+                    0, (datetime.fromisoformat(value) - datetime.now(timezone.utc)).total_seconds()
+                )
         self.stats = {
             "requests": 0,
             "input_tokens": 0,
@@ -32,13 +45,37 @@ class GeminiText:
             "last_error": "",
         }
 
-    async def create(self, instructions, messages, tools, max_output_tokens=None, allow_local=True):
+    async def local_create(self, instructions, messages, tools, budget, purpose):
+        self.stats["local_requests"] += 1
+        self.stats["last_provider"] = "local"
+        key = (
+            self.ledger.reserve("local", self.settings.local_model, purpose, 0)
+            if self.ledger
+            else None
+        )
+        try:
+            response = await self.local.create(instructions, messages, tools, budget)
+        except BaseException:
+            if key:
+                self.ledger.finish(key, state="failed")
+            raise
+        if key:
+            self.ledger.finish(key, response)
+        return response
+
+    async def create(
+        self,
+        instructions,
+        messages,
+        tools,
+        max_output_tokens=None,
+        allow_local=True,
+        purpose="text",
+    ):
         budget = max_output_tokens or self.settings.text_max_output_tokens
         if time.monotonic() < self.cooldown_until:
             if self.local is not None and allow_local:
-                self.stats["local_requests"] += 1
-                self.stats["last_provider"] = "local"
-                return await self.local.create(instructions, messages, tools, budget)
+                return await self.local_create(instructions, messages, tools, budget, purpose)
             raise AIUnavailable(
                 "Gemini kutish davrida. Mahalliy ovoz tanish va asl yozuv ishlatiladi."
             )
@@ -60,6 +97,23 @@ class GeminiText:
                 }
             )
         try:
+            key = None
+            if self.ledger:
+                from .usage import estimate_input
+
+                try:
+                    key = self.ledger.reserve(
+                        "gemini",
+                        self.settings.gemini_model,
+                        purpose,
+                        estimate_input(instructions, messages, tools) + budget,
+                    )
+                except AIUnavailable:
+                    if allow_local and self.local is not None:
+                        return await self.local_create(
+                            instructions, messages, tools, budget, purpose
+                        )
+                    raise
             self.stats["requests"] += 1
             response = await self.client.chat.completions.create(
                 model=self.settings.gemini_model,
@@ -73,10 +127,18 @@ class GeminiText:
             if response.usage:
                 self.stats["input_tokens"] += response.usage.prompt_tokens
                 self.stats["output_tokens"] += response.usage.completion_tokens
+            if key:
+                self.ledger.finish(key, response)
             if response.choices and response.choices[0].finish_reason == "length":
                 self.stats["truncated"] += 1
             return response
+        except asyncio.CancelledError:
+            if key:
+                self.ledger.finish(key, state="interrupted")
+            raise
         except APIError as error:
+            if key:
+                self.ledger.finish(key, state="failed")
             status = getattr(error, "status_code", None)
             if status == 429:
                 self.stats["rate_limited"] += 1
@@ -86,6 +148,11 @@ class GeminiText:
                 except (ValueError, TypeError):
                     delay = 300
                 self.cooldown_until = time.monotonic() + delay
+                if self.store:
+                    self.store.set_telegram_state(
+                        "gemini_cooldown_until",
+                        (datetime.now(timezone.utc) + timedelta(seconds=delay)).isoformat(),
+                    )
                 explanation = "Gemini API kvotasi yoki so'rov tezligi limiti to'ldi. Google AI Studio dagi kvota/billingni tekshiring; kalit/profil almashtirilmadi."
             elif status in {401, 403}:
                 explanation = "Gemini API kaliti yoki ruxsati qabul qilinmadi. GEMINI_API_KEY va loyiha ruxsatlarini tekshiring."
@@ -103,9 +170,7 @@ class GeminiText:
                 and self.local is not None
                 and (status == 429 or status is None or status >= 500)
             ):
-                self.stats["local_requests"] += 1
-                self.stats["last_provider"] = "local"
-                return await self.local.create(instructions, messages, tools, budget)
+                return await self.local_create(instructions, messages, tools, budget, purpose)
             raise AIUnavailable(explanation) from None
 
     async def transcribe_audio(self, wav, language="uz"):
@@ -131,6 +196,7 @@ class GeminiText:
             [],
             max_output_tokens=384,
             allow_local=False,
+            purpose="asr",
         )
         if not response.choices or response.choices[0].finish_reason == "length":
             raise AIUnavailable("Ovoz matni tugallanmagan; asl yozuv saqlanadi.")
@@ -144,6 +210,7 @@ class GeminiText:
             "local_model": self.settings.local_model,
             "local_available": bool(self.local and self.local.available),
             "cooldown_seconds": max(0, int(self.cooldown_until - time.monotonic())),
+            "daily": self.ledger.summary() if self.ledger else None,
         }
 
     async def close(self):

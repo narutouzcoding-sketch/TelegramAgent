@@ -51,6 +51,8 @@ class Settings:
     local_model: str = "qwen3:4b-instruct"
     local_ai_url: str = "http://127.0.0.1:11434"
     gemini_audio_asr: bool = False
+    ai_daily_max_requests: int = 0
+    ai_daily_max_tokens: int = 0
 
     @classmethod
     def load(cls, require_telegram=True):
@@ -121,8 +123,14 @@ class Settings:
             local_model=os.getenv("LOCAL_AI_MODEL", "qwen3:4b-instruct").strip(),
             local_ai_url=os.getenv("LOCAL_AI_URL", "http://127.0.0.1:11434").strip(),
             gemini_audio_asr=os.getenv("GEMINI_AUDIO_ASR", "true").strip().lower() == "true",
+            ai_daily_max_requests=int(os.getenv("AI_DAILY_MAX_REQUESTS", "0")),
+            ai_daily_max_tokens=int(os.getenv("AI_DAILY_MAX_TOKENS", "0")),
         )
         ZoneInfo(result.timezone)
+        if result.ai_daily_max_requests < 0 or result.ai_daily_max_tokens < 0:
+            raise ValueError(
+                "AI kunlik sarf chegaralari manfiy bo'lmasin; 0 = mahalliy chegara o'chirilgan."
+            )
         from urllib.parse import urlparse
 
         local_url = urlparse(result.local_ai_url)

@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -14,6 +15,7 @@ from aiohttp import web  # noqa: E402
 
 from telegram_agent.config import Settings  # noqa: E402
 from telegram_agent.panel import PanelControl, create_panel  # noqa: E402
+from telegram_agent.store import utc_now  # noqa: E402
 
 
 async def main():
@@ -93,6 +95,16 @@ async def main():
         control.store.save_contact("QA Kursdosh", "@qa_example")
         control.store.save_contact("QA Ikkinchi", "+998901234567")
         control.store.add_plan("SINOV: kitob o‘qish", "Vaqtinchalik QA bazasi")
+        reminder = control.store.add_reminder(
+            "SINOV: yetkazilmagan eslatma",
+            (utc_now() + timedelta(hours=1)).isoformat(),
+            mode="call",
+        )
+        with control.store.db:
+            control.store.db.execute(
+                "UPDATE reminders SET state='failed',attempts=3,last_error='QA: aloqa uzilgan' WHERE id=?",
+                (reminder["id"],),
+            )
         from telegram_agent.voice_library import save_upload
 
         await save_upload(

@@ -1,5 +1,8 @@
 # Mahalliy tekshiruv natijasi
 
+
+Eng so‘nggi to‘liq tekshiruv: **298 test**, 26 yangi regressiya; mahalliy autostart va yashirin xizmat ishga tushdi. [PROFESSIONAL_AUDIT.md](PROFESSIONAL_AUDIT.md). Quyidagi qaydlar avvalgi bosqichlarga tegishli.
+
 2026-11-07–08 kunlari Windows muhitida bajarildi.
 
 ## Qo‘ng‘iroq audio zanjiri — 2026-11-08

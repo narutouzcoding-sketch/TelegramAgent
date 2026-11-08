@@ -241,6 +241,7 @@ def main():
             "free-voice-check",
             "run",
             "panel",
+            "supervise",
         ],
     )
     parser.add_argument(
@@ -269,7 +270,11 @@ def main():
     parser.add_argument("--port", type=int, default=8765, help="panel: HTTP port")
     args = parser.parse_args()
     try:
-        if args.command == "panel":
+        if args.command == "supervise":
+            from .supervisor import supervise
+
+            return supervise()
+        elif args.command == "panel":
             from .panel import serve_panel
 
             with process_lock():

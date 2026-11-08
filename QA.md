@@ -1,5 +1,8 @@
 # TelegramAgent — foydalanuvchi va barqarorlik auditi
 
+
+Eng so‘nggi to‘liq tekshiruv: **298 test**, 26 yangi regressiya; mahalliy autostart va yashirin xizmat ishga tushdi. [PROFESSIONAL_AUDIT.md](PROFESSIONAL_AUDIT.md). Quyidagi qaydlar avvalgi bosqichlarga tegishli.
+
 2026-11-08, Asia/Tashkent. Windows, Python 3.12, mahalliy panel.
 
 ## Oxirgi qo‘shimchalar

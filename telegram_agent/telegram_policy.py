@@ -23,6 +23,11 @@ class TelegramPolicy:
     def ensure_active(self):
         if self.stopped.is_set():
             raise TelegramPaused(self.reason)
+        restriction = self.store.telegram_state("restriction_latch")
+        if restriction:
+            raise TelegramPaused(
+                "Telegram cheklovi saqlangan. Akkauntni tekshirib, paneldagi qayta tekshirish orqali davom eting; avtomatik urinish yuborilmadi."
+            )
         value = self.store.telegram_state("pause_until")
         if value and datetime.fromisoformat(value) > utc_now():
             raise TelegramPaused(
@@ -37,6 +42,7 @@ class TelegramPolicy:
             )
             self.reason = f"Telegram {seconds} soniya kutishni talab qildi. Agent to'xtatildi; avtomatik qayta urinilmaydi."
         else:
+            self.store.set_telegram_state("restriction_latch", type(error).__name__)
             self.reason = "Telegram akkaunt/faoliyat cheklovini qaytardi. Agent to'xtatildi; ruxsat yoki cheklov aniqlanmaguncha qayta urinilmaydi."
         self.stopped.set()
         raise TelegramPaused(self.reason) from None
