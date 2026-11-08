@@ -72,6 +72,11 @@ class FreeVoiceSession:
         self.speaking = False
         self.accepting = False
         self.record_only = getattr(brain, "record_only", False)
+        self.recording_enabled = getattr(
+            brain,
+            "recording_enabled",
+            getattr(getattr(brain, "settings", None), "record_calls", True),
+        )
         self.misses = 0
 
     async def start(self):
@@ -112,8 +117,16 @@ class FreeVoiceSession:
                 "en": "The AI is temporarily unavailable. Your original voice is recorded and will be sent to the owner.",
                 "ru": "ИИ временно недоступен. Ваш голос записывается и будет передан владельцу.",
             }[language]
+            if not self.recording_enabled:
+                reply = {
+                    "uz": "AI hozir javob bera olmadi. Ovoz yozish o'chirilgan. Chatda davom eting.",
+                    "en": "The AI is unavailable. Recording is disabled. Please continue in chat.",
+                    "ru": "ИИ недоступен. Запись отключена. Продолжите в чате.",
+                }[language]
         await self.speak(reply)
-        if getattr(self.brain, "finished", False):
+        if getattr(self.brain, "finished", False) or (
+            self.record_only and not self.recording_enabled
+        ):
             self.closed.set()
 
     async def speak(self, reply):

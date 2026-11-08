@@ -11,6 +11,8 @@ def utc_now():
 
 
 def parse_due(value: str, timezone: str, now=None):
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("Sana va vaqtni kiriting, masalan 2026-12-01T09:00.")
     due = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if due.tzinfo is None:
         due = due.replace(tzinfo=ZoneInfo(timezone))
@@ -626,6 +628,8 @@ class Store:
             ).fetchone()
             if not row:
                 raise ValueError("Ovoz yozuvi topilmadi.")
+            if row["state"] in {"capturing", "sending", "captured"}:
+                raise ValueError("Ovoz yozuvi hozir tayyorlanyapti yoki yuborilyapti. Tugashini kuting.")
             state = "ready" if row["filename"] else "captured"
             self.db.execute(
                 "UPDATE recordings SET state=?,attempts=0,retry_after=NULL WHERE id=?",

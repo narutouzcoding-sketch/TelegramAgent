@@ -25,8 +25,8 @@ Telegram ulanmaydi, hech kimga qo'ng'iroq qilinmaydi. AI so'rovlari tanlangan xi
 
 
 class SandboxStore(Store):
-    def queue_contact_call(self, target, message):
-        result = super().queue_contact_call(target, message)
+    def queue_contact_call(self, target, message, **options):
+        result = super().queue_contact_call(target, message, **options)
         with self.db:
             self.db.execute(
                 "UPDATE outbound_calls SET state='simulated',result=? WHERE id=?",

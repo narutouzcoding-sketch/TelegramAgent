@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import tempfile
 import unicodedata
@@ -15,7 +16,7 @@ from .brain import Brain
 from .config import ROOT
 from .owner_setup import configured_owner
 from .scheduler import Scheduler
-from .store import Store
+from .store import Store, utc_now
 from .telegram_health import ensure_telegram_account
 from .telegram_policy import TelegramPaused, TelegramPolicy
 
@@ -196,11 +197,7 @@ class AgentApp:
 
         @self.calls.on_update(filters.chat_update(ChatUpdate.Status.INCOMING_CALL))
         async def incoming(_, update):
-            if update.chat_id != self.settings.owner_id or self.call_lock.locked():
-                with suppress(Exception):
-                    await self.calls.leave_call(update.chat_id)
-                return
-            self.spawn(self.safe_call("Salom! Men AI yordamchingizman. Suhbatni boshlang."))
+            await self.on_incoming_call(update.chat_id)
 
         @self.calls.on_update(filters.chat_update(ChatUpdate.Status.LEFT_CALL))
         async def ended(_, update):
@@ -216,6 +213,22 @@ class AgentApp:
             self.receive_audio(update)
 
         await self.calls.start()
+
+    def call_event(self, status):
+        self.store.set_telegram_state(
+            "last_call_event", json.dumps({"status": status, "at": utc_now().isoformat()})
+        )
+
+    async def on_incoming_call(self, chat_id):
+        if chat_id != self.settings.owner_id or self.call_lock.locked():
+            self.call_event(
+                "other_account_rejected" if chat_id != self.settings.owner_id else "busy"
+            )
+            with suppress(Exception):
+                await self.calls.leave_call(chat_id)
+            return
+        self.call_event("incoming_received")
+        self.spawn(self.safe_call("Salom! Men AI yordamchingizman. Suhbatni boshlang."))
 
     def receive_audio(self, update):
         recording = getattr(self, "active_recording", None)
@@ -280,8 +293,10 @@ class AgentApp:
 
     async def safe_call(self, introduction, ready=None):
         try:
+            self.call_event("connecting")
             await self.conversation(introduction, ready)
         except Exception as exc:
+            self.call_event("failed:" + type(exc).__name__)
             if ready is not None and not ready.done():
                 ready.set_exception(ConnectionError("Call did not connect"))
             log.warning("Call failed type=%s", type(exc).__name__)
@@ -355,6 +370,7 @@ class AgentApp:
                     self.voice = voice
                     await self.calls.record(self.settings.owner_id, RecordStream(True, parameters))
                     await voice.start()
+                    self.call_event("connected")
                 if ready is not None and not ready.done():
                     ready.set_result(True)
                 try:
@@ -373,6 +389,7 @@ class AgentApp:
                     await self.calls.leave_call(self.settings.owner_id)
                 end_recording(self, recording)
                 self.call_task = None
+                self.call_event("ended")
 
     async def hangup(self):
         if self.voice:

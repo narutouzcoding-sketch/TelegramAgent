@@ -2,7 +2,11 @@
 
 2026-11-07–08 kunlari Windows muhitida bajarildi.
 
-## Oxirgi barqarorlik tekshiruvi — 2026-11-08
+## Professional QA — 2026-11-08
+
+179 ta test o‘tdi. Yangi 20 ta foydalanuvchi ssenariysining dastlabki ishga tushirishida 5 ta nosozlik takrorlandi; tuzatishdan keyin 20/20 o‘tdi. Qo‘shimcha 10 ta regressiya testi mustaqil tester va audit topilmalarini qamraydi. Batafsil matritsa, topilgan 10 kamchilik, brauzer kuzatuvlari va jonli tekshiruv chegaralari [QA.md](QA.md) da.
+
+## Avvalgi barqarorlik tekshiruvi — 2026-11-08
 
 149 ta test o'tdi (`-W error::RuntimeWarning`), Ruff, JavaScript, PowerShell parser va lock tekshiruvlari o'tdi. Yangi testlar asl PCM yozuvini AI dan ajratish, uzilgan yozuvni tiklash, haqiqiy FFmpeg OGG/Opus kodlash, faqat egasiga voice_note yuborish, fayllarni autentifikatsiya bilan berish, katalogdan tashqariga chiqishni rad etish, tokensiz yozib olish, past ovozdagi qisqa javob, 15 soniyadan uzun ovozni kesmaslik, oddiy hangup ni AI xatosi demaslik, navbatdagi xabarni yo'qotmaslik, to'liq transkriptlarni qayta tool kontekstiga yubormaslik, bitta yozish amali uchun bitta AI so'rovi, Gemini 429 da mahalliy model va Retry-After, ovozli sessiyada CPU modelni kutmaslik, native ASR va kvotada mahalliy zaxirani tekshiradi.
 

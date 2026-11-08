@@ -1,6 +1,7 @@
 """Resolve owner-requested Telegram calls, deliver messages and collect bounded replies."""
 
 import asyncio
+import logging
 import subprocess
 import sys
 import tempfile
@@ -14,10 +15,28 @@ from telethon.tl.types import User
 from .ai_access import AIUnavailable, public_ai_error
 from .config import ROOT
 from .setup_inputs import international_phone
+from .telegram_policy import TelegramPaused
+
+log = logging.getLogger(__name__)
 
 
-def relay_text(owner_name, message):
-    return f"Assalomu alaykum. Men {owner_name}ning AI yordamchisiman. Qo'ng'iroq ovozi yozilib, egasiga yuboriladi. U sizga quyidagi xabarni yetkazishimni so'radi. {message}. Rahmat."
+def relay_text(owner_name, message, record_calls=True):
+    notice = "Qo'ng'iroq ovozi yozilib, egasiga yuboriladi. " if record_calls else ""
+    return f"Assalomu alaykum. Men {owner_name}ning AI yordamchisiman. {notice}U sizga quyidagi xabarni yetkazishimni so'radi. {message}. Rahmat."
+
+
+async def notify_owner(app, report):
+    # A report is durable before sending. Offline notification must never redial a
+    # contact or terminate the call queue; Telegram restrictions still stop work.
+    app.store.remember("assistant", report)
+    try:
+        await app.send_text(report)
+    except TelegramPaused:
+        raise
+    except Exception as exc:
+        log.warning(
+            "Call report saved locally; Telegram delivery failed type=%s", type(exc).__name__
+        )
 
 
 class RecipientResolver:
@@ -198,7 +217,9 @@ async def execute_job(app, job):
             await talk_to_contact(app, user, job, task)
             summary = await task.summary()
         else:
-            text = relay_text(app.owner_name, job["message"])
+            text = relay_text(
+                app.owner_name, job["message"], getattr(app.settings, "record_calls", True)
+            )
             language = job.get("language", "uz")
             if language != "uz":
                 from .contact_conversation import LANGUAGES, ContactConversation
@@ -234,9 +255,10 @@ async def execute_job(app, job):
             if answers:
                 summary = "Suhbat uzildi. Qisman tanilgan javob: " + " / ".join(answers)[:2500]
                 app.store.remember("assistant", f"Qo'ng'iroq #{job['id']}\n{summary}")
-        await app.send_text(
+        await notify_owner(
+            app,
             f"Qo'ng'iroq #{job['id']} yakunlanmadi: {reason[:200]}. Qayta terilmadi."
-            + ("\n" + summary if summary else "")
+            + ("\n" + summary if summary else ""),
         )
     else:
         if task is not None:
@@ -245,15 +267,15 @@ async def execute_job(app, job):
                 job["id"], "completed" if answered else "no_answer", summary
             )
             report = f"Qo'ng'iroq #{job['id']} — {job['target']}\n{summary}"
-            app.store.remember("assistant", report)
-            await app.send_text(report)
+            await notify_owner(app, report)
             return
         app.store.finish_contact_call(
             job["id"], "sent", "Qo'ng'iroq ulandi; xabar audiosi uzatildi."
         )
-        await app.send_text(
+        await notify_owner(
+            app,
             f"Qo'ng'iroq #{job['id']}: {job['target']} ga xabar audiosi uzatildi. "
-            "Qabul qiluvchi eshitganini alohida tasdiqlamagan."
+            "Qabul qiluvchi eshitganini alohida tasdiqlamagan.",
         )
     finally:
         if task is not None:

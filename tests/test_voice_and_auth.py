@@ -127,6 +127,7 @@ async def test_busy_call_delivers_text_without_second_call(brain):
 
 async def test_connection_releases_scheduler_while_conversation_continues(brain):
     app = AgentApp.__new__(AgentApp)
+    app.store = brain.store
     app.background_tasks = set()
     app.send_text = AsyncMock()
     finish = asyncio.Event()

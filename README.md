@@ -316,3 +316,7 @@ Haqiqiy tekshiruv: `/call` → qo'ng'iroqqa javob bering → o'zbekcha savol ber
 Haqiqiy sinov muvaffaqiyatli o'tgach, xohlasangiz `install-autostart.ps1` ni ishga tushiring. U faqat joriy foydalanuvchining Windows login paytida boshlanadigan `TelegramAgent` vazifasini yaratadi. Administrator huquqi so'ralmaydi. `remove-autostart.ps1` uni olib tashlaydi. Avtomatik ishga tushirish hali yoqilmagan.
 
 24/7 ishlashi uchun keyinchalik doimiy Windows kompyuter yoki serverga ko'chirish kerak. Ushbu tayyor ishga tushirish va jarayon blokirovkasi Windows uchun yozilgan.
+
+## Professional QA — 2026-11-08
+
+20 ta foydalanuvchi ssenariysi va qo‘shimcha regressiyalar bilan jami 179 ta test o‘tdi. Topilgan 10 ta kamchilik, tuzatishlar, brauzer dalillari va keyingi funksiyalar ustuvorligi [QA.md](QA.md) da. Qayta tekshirish: `powershell -NoProfile -ExecutionPolicy Bypass -File .\qa.ps1`. Alohida, Telegram/AI ulanmaydigan brauzer sinovi: `qa.ps1 -Browser`.

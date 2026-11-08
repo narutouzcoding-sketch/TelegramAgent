@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import hmac
+import json
 import logging
 import secrets
 import time
@@ -53,7 +54,10 @@ class PanelControl:
 
     @property
     def connected(self):
-        return self.running and self.agent.ready.is_set()
+        if not self.running or not self.agent.ready.is_set():
+            return False
+        telegram = getattr(self.agent, "telegram", None)
+        return telegram is None or telegram.is_connected()
 
     def runtime_settings(self):
         ids = tuple(
@@ -241,7 +245,7 @@ class PanelControl:
             "record",
         }:
             raise ValueError("Til yoki suhbat turi noto'g'ri.")
-        text = relay_text(agent.owner_name, message.strip())
+        text = relay_text(agent.owner_name, message.strip(), agent.settings.record_calls)
         if language != "uz" or mode != "relay":
             from .contact_conversation import LANGUAGES, ContactConversation
 
@@ -266,6 +270,8 @@ class PanelControl:
 
     def state(self):
         phase = "running" if self.connected else self.phase
+        if self.running and self.agent.ready.is_set() and not self.connected:
+            phase = "reconnecting"
         cfg = self.runtime_settings()
         brain = self.agent.brain if self.connected else self.idle_brain
         adapter = getattr(brain, "gemini", None)
@@ -273,6 +279,7 @@ class PanelControl:
             "agent": {
                 "phase": phase,
                 "running": self.connected,
+                "worker_running": self.running,
                 "error": self.last_error,
                 "owner_name": self.agent.owner_name if self.connected else "",
                 "timezone": cfg.timezone,
@@ -280,6 +287,9 @@ class PanelControl:
                 "voice_provider": cfg.voice_provider,
                 "voice_enabled": cfg.enable_voice_calls,
                 "active_call": bool(self.connected and self.agent.call_lock.locked()),
+                "last_call_event": json.loads(
+                    self.store.telegram_state("last_call_event") or "null"
+                ),
                 "max_calls_per_hour": cfg.max_calls_per_hour,
                 "record_calls": cfg.record_calls,
                 "asr_provider": getattr(brain, "last_asr", "Kutilyapti"),
@@ -416,6 +426,8 @@ def create_panel(control, password, password_path=None):
             return web.json_response({"error": "Ko'p urinish. 5 daqiqa kuting."}, status=429)
         attempts[ip] = recent + [now]
         data = await request.json()
+        if not isinstance(data, dict):
+            raise ValueError("JSON obyekt yuboring; maydonlarni tekshiring.")
         supplied = data.get("password", "")
         if not isinstance(supplied, str) or len(supplied) > 256:
             raise ValueError("Parol noto'g'ri.")
@@ -446,6 +458,8 @@ def create_panel(control, password, password_path=None):
     async def dispatch(request):
         action = request.match_info["action"]
         data = await request.json() if request.method == "POST" else {}
+        if not isinstance(data, dict):
+            raise ValueError("JSON obyekt yuboring; maydonlarni tekshiring.")
         if action == "state" and request.method == "GET":
             result = control.state()
         elif action == "logout":
