@@ -98,7 +98,10 @@ class FreeVoiceSession:
 
     async def greet(self):
         # A greeting is speech to deliver, not a new owner instruction to the text agent.
-        await self.speak(self.introduction)
+        if getattr(self.brain, "greeting_pcm", None):
+            await self.speak_pcm(self.brain.greeting_pcm)
+        else:
+            await self.speak(self.introduction)
         self.accepting = True
 
     async def respond(self, text):
@@ -130,12 +133,27 @@ class FreeVoiceSession:
             self.closed.set()
 
     async def speak(self, reply):
+        from .documents import PrivateReply
+
+        if isinstance(reply, PrivateReply):
+            delivery = getattr(self.brain, "private_delivery", None)
+            if delivery is not None:
+                await delivery(reply)
+            # Speak only a fixed notification. Private excerpts stay out of TTS.
+            reply = "Hujjatdan topilgan natija matn ko'rinishida saqlandi. Chat yoki Hujjatlar bo'limida o'qing."
         self.busy = True
         try:
             with tempfile.TemporaryDirectory(dir=ROOT / "data", prefix="free-call-") as folder:
                 path = Path(folder) / "reply.ogg"
                 await self.brain.speech(reply, path)
                 pcm = await decode_pcm(path)
+            await self.speak_pcm(pcm)
+        finally:
+            self.busy = False
+
+    async def speak_pcm(self, pcm):
+        self.busy = True
+        try:
             self.output.extend(pcm[i : i + 960].ljust(960, b"\0") for i in range(0, len(pcm), 960))
             self.speaking = True
             while self.output and not self.closed.is_set():

@@ -2,6 +2,10 @@
 
 2026-11-08, Asia/Tashkent. Windows, Python 3.12, mahalliy panel.
 
+## Oxirgi qo‘shimchalar
+
+Asl ovoz, shaxsiy hujjatlar, zaxira va natijalar navbati qo‘shilgach **204 ta test o‘tdi**. Joriy to‘liq hisobot [FEATURES.md](FEATURES.md) da. Quyidagi 20 ssenariy matritsasi va 179 testli audit oldingi bosqichning qaydi.
+
 ## Natija va sinov chegarasi
 
 20 ta alohida foydalanuvchi ssenariysi avtomatlashtirildi. Birinchi ishga tushirishda **15 o'tdi, 5 yiqildi**; tegishli tuzatishlardan keyin **20/20 o'tdi**. Mustaqil tester kodni o'qib, vaqtinchalik bazalar va sun'iy AI javoblari bilan qo'shimcha nosozliklarni takrorladi. Jami regressiya to'plami: **179 test o'tdi**. Ruff, JavaScript va PowerShell sintaksisi tekshirildi.

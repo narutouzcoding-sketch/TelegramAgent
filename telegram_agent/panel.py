@@ -46,6 +46,12 @@ class PanelControl:
         self.control_lock = asyncio.Lock()
         self.contact_sync_lock = asyncio.Lock()
         self.audio = {}
+        from .documents import DocumentLibrary
+
+        self.documents = DocumentLibrary(self.store)
+        self.document_lock = asyncio.Lock()
+        self.upload_lock = asyncio.Lock()
+        self.backup_lock = asyncio.Lock()
         self.shutdown = asyncio.Event()
 
     @property
@@ -182,16 +188,24 @@ class PanelControl:
         language="uz",
         max_turns=4,
         duration_seconds=180,
+        audio_id=None,
+        delivery="call",
+        collect_reply=False,
     ):
         agent = self.require_agent()
         if not agent.settings.enable_voice_calls:
             raise ValueError("Ovozli rejim sozlanmagan. free-voice.ps1 orqali avval ovozni sinang.")
+        if mode == "voice":
+            from .voice_library import asset_path
+
+            _, asset = asset_path(self.store, audio_id)
+            message = "Asl ovoz: " + asset["label"]
         if not isinstance(message, str) or not message.strip() or len(message) > 1500:
             raise ValueError("Aytiladigan xabar 1..1500 belgidan iborat bo'lsin.")
         if not isinstance(request_id, str) or not 16 <= len(request_id) <= 100:
             raise ValueError("So'rov identifikatori yo'q. Sahifani yangilang.")
         fingerprint = hashlib.sha256(
-            f"{contact_id}|{target}|{message}|{due_at}|{mode}|{language}|{max_turns}|{duration_seconds}".encode()
+            f"{contact_id}|{target}|{message}|{due_at}|{mode}|{language}|{max_turns}|{duration_seconds}|{audio_id}|{delivery}|{collect_reply}".encode()
         ).hexdigest()
         key = "panel-call:" + request_id
         cached = self.store.cached_tool(key)
@@ -206,6 +220,9 @@ class PanelControl:
             language=language,
             max_turns=max_turns,
             duration_seconds=duration_seconds,
+            audio_id=audio_id,
+            delivery=delivery,
+            collect_reply=collect_reply,
         )
         if contact_id:
             row = self.contact(contact_id)
@@ -303,6 +320,9 @@ class PanelControl:
             "calls": self.store.list_contact_calls(),
             "messages": self.store.history(40),
             "recordings": self.store.list_recordings(),
+            "voice_assets": self.store.voice_assets(),
+            "library": self.documents.status(),
+            "notifications": self.store.notification_status(self.settings.owner_id),
         }
 
     async def close(self):
@@ -350,7 +370,7 @@ def create_panel(control, password, password_path=None):
             origin = request.headers.get("Origin")
             if origin and origin != f"{request.scheme}://{request.host}":
                 raise web.HTTPForbidden(text="Origin rejected")
-            if request.content_type != "application/json":
+            if request.content_type != "application/json" and request.path != "/api/voice-upload":
                 raise web.HTTPBadRequest(text="JSON required")
         token = request.cookies.get("ta_session", "")
         session = sessions.get(token)
@@ -360,6 +380,8 @@ def create_panel(control, password, password_path=None):
         public = request.path in {
             "/",
             "/app.js",
+            "/voice-ui.js",
+            "/library-ui.js",
             "/style.css",
             "/icon.svg",
             "/icon-192.png",
@@ -402,11 +424,11 @@ def create_panel(control, password, password_path=None):
             }
         )
         response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+            "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
         )
         return response
 
-    app = web.Application(middlewares=[guard], client_max_size=4 * 1024 * 1024)
+    app = web.Application(middlewares=[guard], client_max_size=13 * 1024 * 1024)
 
     async def static(request):
         name = request.path.lstrip("/") or "index.html"
@@ -476,6 +498,37 @@ def create_panel(control, password, password_path=None):
             control.shutdown.set()
         elif action == "chat":
             result = await control.ask(data.get("text"))
+        elif action == "library-index":
+            if control.document_lock.locked():
+                raise ValueError("Hujjatlar hozir yangilanyapti. Tugashini kuting.")
+            async with control.document_lock:
+                result = await control.documents.index(data.get("folder"))
+        elif action == "library-disconnect":
+            if control.document_lock.locked():
+                raise ValueError("Hujjatlar hozir yangilanyapti. Tugashini kuting.")
+            result = control.documents.disconnect()
+        elif action == "library-search":
+            result = {"results": control.documents.search(data.get("query"))}
+        elif action == "library-note":
+            result = control.documents.add_note(data.get("title"), data.get("body"))
+        elif action == "archive-voice":
+            result = control.store.archive_voice_asset(data.get("id"))
+        elif action == "retry-notifications":
+            result = control.store.retry_notifications(control.settings.owner_id)
+        elif action == "backup":
+            if (
+                control.backup_lock.locked()
+                or control.document_lock.locked()
+                or control.upload_lock.locked()
+                or (control.agent and control.agent.call_lock.locked())
+            ):
+                raise ValueError(
+                    "Hozir audio, hujjat yoki qo'ng'iroq band. Tugagach zaxira yarating."
+                )
+            from .maintenance import create_backup
+
+            async with control.backup_lock:
+                result = await create_backup(control.store)
         elif action == "plan":
             result = (
                 control.store.update_plan(int(data["id"]), data["title"], data.get("details", ""))
@@ -532,6 +585,9 @@ def create_panel(control, password, password_path=None):
                 data.get("language", "uz"),
                 data.get("max_turns", 4),
                 data.get("duration_seconds", 180),
+                data.get("audio_id"),
+                data.get("delivery", "call"),
+                data.get("collect_reply", False),
             )
         elif action == "preview":
             result = await control.preview(
@@ -562,6 +618,45 @@ def create_panel(control, password, password_path=None):
             raise web.HTTPNotFound()
         return web.FileResponse(entry[0], headers={"Content-Type": "audio/ogg"})
 
+    async def voice_upload(request):
+        from .voice_library import MAX_UPLOAD, save_upload
+
+        if control.upload_lock.locked():
+            raise ValueError("Boshqa ovoz yuklanyapti. Tugashini kuting.")
+        if not (
+            request.content_type.startswith("audio/")
+            or request.content_type == "application/octet-stream"
+        ):
+            raise ValueError("Audio faylini tanlang.")
+        async with control.upload_lock:
+            data = bytearray()
+            async for chunk in request.content.iter_chunked(65536):
+                data.extend(chunk)
+                if len(data) > MAX_UPLOAD:
+                    raise ValueError("Audio 12 MB dan kichik bo'lsin.")
+            result = await save_upload(
+                control.store, data, request.query.get("label", "Mening ovozim")
+            )
+        return web.json_response(result)
+
+    async def voice_audio(request):
+        from .voice_library import asset_path
+
+        path, _ = asset_path(control.store, request.match_info["asset_id"])
+        return web.FileResponse(path, headers={"Content-Type": "audio/ogg"})
+
+    async def backup_download(request):
+        from .maintenance import backup_path
+
+        path = backup_path(control.root, request.match_info["token"])
+        return web.FileResponse(
+            path,
+            headers={
+                "Content-Type": "application/zip",
+                "Content-Disposition": 'attachment; filename="TelegramAgent-backup.zip"',
+            },
+        )
+
     async def recording_audio(request):
         row = control.store.db.execute(
             "SELECT * FROM recordings WHERE id=?", (request.match_info["recording_id"],)
@@ -582,6 +677,8 @@ def create_panel(control, password, password_path=None):
     for route in (
         "/",
         "/app.js",
+        "/voice-ui.js",
+        "/library-ui.js",
         "/style.css",
         "/icon.svg",
         "/icon-192.png",
@@ -592,6 +689,9 @@ def create_panel(control, password, password_path=None):
         app.router.add_get(route, static)
     app.router.add_get("/api/session", session_status)
     app.router.add_post("/api/login", login)
+    app.router.add_post("/api/voice-upload", voice_upload)
+    app.router.add_get("/api/voice-assets/{asset_id:[a-f0-9]{32}}", voice_audio)
+    app.router.add_get("/api/backups/{token:[a-f0-9]{32}}", backup_download)
     app.router.add_get("/api/{action:state}", dispatch)
     app.router.add_post("/api/{action}", dispatch)
     app.router.add_get("/api/audio/{token}", audio)

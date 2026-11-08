@@ -32,6 +32,9 @@ HELP = """Men shaxsiy AI yordamchingizman. O'zbekcha yozing, ovozli xabar yubori
 /callto en @username | xabar — tanlangan tilda aytish
 /askto en @username | savol — javob olib kelish
 /recordto en @username | English question — asl ovoz, AI tokensiz
+/voicecall @username — o'z golosingizga reply qilib, qo'ng'iroqda eshittirish
+/voiceask @username — o'z golosingizni eshittirib javobini yozib olish
+/voicesend @username — o'z golosingizga reply qilib, chatga yuborish
 /talkto en @username | vazifa — qisqa suhbat
 /contacts ism — kontaktlardan qidirish
 /calls — topshirilgan qo'ng'iroqlar holati
@@ -57,6 +60,7 @@ class AgentApp:
         (ROOT / "data").mkdir(exist_ok=True)
         self.store = Store(ROOT / "data" / "agent.sqlite3", settings.timezone)
         self.brain = Brain(settings, self.store)
+        self.brain.private_delivery = self.send_text
         self.policy = TelegramPolicy(settings, self.store)
         self.telegram = TelegramClient(
             str(ROOT / "data" / "assistant"),
@@ -138,6 +142,9 @@ class AgentApp:
             from .recordings import run_recordings
 
             self.spawn(run_recordings(self))
+            from .notifications import run_notifications
+
+            self.spawn(run_notifications(self))
             if self.settings.enable_voice_calls:
                 self.contact_queue_task = asyncio.create_task(run_queue(self))
             log.info("Agent started; owner allowlist active")
@@ -470,6 +477,42 @@ class AgentApp:
                 f"Kontaktlarga qo'ng'iroq: {'yoqilgan' if self.settings.enable_contact_calls else 'o‘chirilgan'}."
             )
             return
+        if command in {"/voicecall", "/voiceask", "/voicesend"}:
+            try:
+                from .voice_library import MAX_UPLOAD, save_upload
+
+                target = text[len(command) :].strip()
+                language = "uz"
+                if target.split(maxsplit=1)[:1] and target.split(maxsplit=1)[0] in {
+                    "uz",
+                    "en",
+                    "ru",
+                }:
+                    language, target = target.split(maxsplit=1)
+                if not target:
+                    raise ValueError("O'z golosingizga reply qilib /voiceask @username yuboring.")
+                message = await event.get_reply_message()
+                if not message or not message.voice or message.sender_id != self.settings.owner_id:
+                    raise ValueError("O'zingiz yuborgan golosga reply qiling va kontaktni yozing.")
+                if (message.file.size or 0) > MAX_UPLOAD:
+                    raise ValueError("Golos 12 MB dan kichik bo'lsin.")
+                payload = await self.policy.action(lambda: message.download_media(file=bytes))
+                asset = await save_upload(self.store, payload, "Telegramdan olingan ovozim")
+                result = await self.queue_requested_call(
+                    target,
+                    "Asl ovozli xabar",
+                    mode="voice",
+                    audio_id=asset["id"],
+                    delivery="message" if command == "/voicesend" else "call",
+                    collect_reply=command == "/voiceask",
+                    language=language,
+                )
+                await self.send_text(
+                    f"Vazifa #{result['id']} navbatga saqlandi. Asl ovozingiz ishlatiladi; hali yetkazilmadi."
+                )
+            except (ValueError, TypeError) as exc:
+                await self.send_text(str(exc))
+            return
         if command == "/plans":
             rows = self.store.list_plans()
             await self.send_text(
@@ -612,6 +655,10 @@ class AgentApp:
                     await self.send_text("Eshitdim: " + text)
                     reply = await self.brain.answer(text)
                     await self.send_text(reply)
+                    from .documents import PrivateReply
+
+                    if isinstance(reply, PrivateReply):
+                        return
                     try:
                         out = Path(folder) / "reply.ogg"
                         await self.brain.speech(reply, out)

@@ -2,6 +2,10 @@
 
 2026-11-07–08 kunlari Windows muhitida bajarildi.
 
+## Asl ovoz va hujjatlar — yakuniy tekshiruv
+
+`qa.ps1`: **204 passed**, 0 failure/error/skipped. Yangi 25 ta regressiya, shu jumladan 5 ta mikrofon holatining Node sinovi, haqiqiy FFmpeg OGG, private hujjatning cloud/TTS ga chiqmasligi, PDF/DOCX, backup poygasi va owner outbox tekshirildi. Brauzerda sintetik audio yuklash/saqlash/topshiriq, mahalliy qidiruv/qayd va backup havolasi ishladi. Haqiqiy qurilma mikrofoni va inson bilan native Telegram qo‘ng‘irog‘i bu natijaga kirmaydi. Tafsilotlar [FEATURES.md](FEATURES.md).
+
 ## Professional QA — 2026-11-08
 
 179 ta test o‘tdi. Yangi 20 ta foydalanuvchi ssenariysining dastlabki ishga tushirishida 5 ta nosozlik takrorlandi; tuzatishdan keyin 20/20 o‘tdi. Qo‘shimcha 10 ta regressiya testi mustaqil tester va audit topilmalarini qamraydi. Batafsil matritsa, topilgan 10 kamchilik, brauzer kuzatuvlari va jonli tekshiruv chegaralari [QA.md](QA.md) da.

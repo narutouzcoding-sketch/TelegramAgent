@@ -68,6 +68,9 @@ class Store:
                 "source": "TEXT NOT NULL DEFAULT 'manual'",
             },
             "outbound_calls": {
+                "audio_id": "TEXT",
+                "delivery": "TEXT NOT NULL DEFAULT 'call'",
+                "collect_reply": "INTEGER NOT NULL DEFAULT 0",
                 "due": "TEXT",
                 "recipient_user_id": "INTEGER",
                 "mode": "TEXT NOT NULL DEFAULT 'relay'",
@@ -83,7 +86,16 @@ class Store:
                 if name not in columns:
                     self.db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {declaration}")
         self.db.commit()
+        message_columns = {r[1] for r in self.db.execute("PRAGMA table_info(messages)")}
+        if "private" not in message_columns:
+            self.db.execute("ALTER TABLE messages ADD COLUMN private INTEGER NOT NULL DEFAULT 0")
+        self.db.execute(
+            "CREATE TABLE IF NOT EXISTS voice_assets (id TEXT PRIMARY KEY,label TEXT NOT NULL,filename TEXT NOT NULL,duration REAL NOT NULL,created TEXT NOT NULL,archived INTEGER NOT NULL DEFAULT 0)"
+        )
         self.db.execute("CREATE TABLE IF NOT EXISTS contact_exclusions (digest TEXT PRIMARY KEY)")
+        self.db.execute(
+            "CREATE TABLE IF NOT EXISTS owner_outbox (id TEXT PRIMARY KEY,owner_id INTEGER NOT NULL,body TEXT NOT NULL,created TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'pending',attempts INTEGER NOT NULL DEFAULT 0,retry_after TEXT,last_error TEXT NOT NULL DEFAULT '')"
+        )
         self.db.execute(
             "CREATE TABLE IF NOT EXISTS recordings (id TEXT PRIMARY KEY, peer_id INTEGER, label TEXT, job_id INTEGER, created TEXT, state TEXT, filename TEXT DEFAULT '',incoming_filename TEXT DEFAULT '', duration REAL DEFAULT 0, attempts INTEGER DEFAULT 0,retry_after TEXT,last_error TEXT DEFAULT '')"
         )
@@ -230,12 +242,12 @@ class Store:
             raise ValueError("Kutilayotgan eslatma topilmadi yoki hozir yetkazilmoqda.")
         return {"saved": True, "id": reminder_id}
 
-    def remember(self, role, text):
+    def remember(self, role, text, private=False):
         if text.strip():
             with self.db:
                 self.db.execute(
-                    "INSERT INTO messages(role,content,created) VALUES(?,?,?)",
-                    (role, text[:12000], utc_now().isoformat()),
+                    "INSERT INTO messages(role,content,created,private) VALUES(?,?,?,?)",
+                    (role, text[:12000], utc_now().isoformat(), int(bool(private))),
                 )
                 self.db.execute(
                     "DELETE FROM messages WHERE id NOT IN "
@@ -249,7 +261,10 @@ class Store:
         return [dict(r) for r in reversed(rows)]
 
     def context(self, limit=10, max_chars=10000):
-        entries = self.history(limit)
+        rows = self.db.execute(
+            "SELECT role,content FROM messages WHERE private=0 ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+        entries = [dict(row) for row in reversed(rows)]
         retained = []
         size = 0
         for entry in reversed(entries):
@@ -414,13 +429,27 @@ class Store:
         language="uz",
         max_turns=4,
         duration_seconds=180,
+        audio_id=None,
+        delivery="call",
+        collect_reply=False,
     ):
-        if mode not in {"relay", "ask", "conversation", "record"} or language not in {
+        if mode not in {"relay", "ask", "conversation", "record", "voice"} or language not in {
             "uz",
             "en",
             "ru",
         }:
             raise ValueError("Qo'ng'iroq turi yoki tili noto'g'ri.")
+        if delivery not in {"call", "message"} or (delivery == "message" and mode != "voice"):
+            raise ValueError("Yetkazish turi noto'g'ri.")
+        if type(collect_reply) is not bool or (
+            collect_reply and (mode != "voice" or delivery != "call")
+        ):
+            raise ValueError("Javob yozish faqat asl ovozli qo'ng'iroq uchun.")
+        if mode == "voice":
+            if not isinstance(audio_id, str) or not self.voice_asset(audio_id):
+                raise ValueError("Avval asl ovoz yozuvini saqlang yoki tanlang.")
+        elif audio_id is not None:
+            raise ValueError("Asl ovoz uchun voice rejimini tanlang.")
         if (
             not isinstance(max_turns, int)
             or not 1 <= max_turns <= 10
@@ -435,8 +464,17 @@ class Store:
         due = parse_due(due_at, self.timezone).isoformat() if due_at else None
         existing = self.db.execute(
             "SELECT id,state FROM outbound_calls WHERE target=? AND message=? "
-            "AND state IN ('queued','running') AND due IS ? AND mode=? AND language=? ORDER BY id LIMIT 1",
-            (target.strip(), message.strip(), due, mode, language),
+            "AND state IN ('queued','running') AND due IS ? AND mode=? AND language=? AND audio_id IS ? AND delivery=? AND collect_reply=? ORDER BY id LIMIT 1",
+            (
+                target.strip(),
+                message.strip(),
+                due,
+                mode,
+                language,
+                audio_id,
+                delivery,
+                int(collect_reply),
+            ),
         ).fetchone()
         if existing:
             return {
@@ -457,7 +495,7 @@ class Store:
             raise ValueError("Navbatda 10 ta topshiriq bor. Avval ularning yakunlanishini kuting.")
         with self.db:
             cursor = self.db.execute(
-                "INSERT INTO outbound_calls(target,message,created,due,recipient_user_id,mode,language,max_turns,duration_seconds) VALUES(?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO outbound_calls(target,message,created,due,recipient_user_id,mode,language,max_turns,duration_seconds,audio_id,delivery,collect_reply) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     target.strip(),
                     message.strip(),
@@ -468,6 +506,9 @@ class Store:
                     language,
                     max_turns,
                     duration_seconds,
+                    audio_id,
+                    delivery,
+                    int(collect_reply),
                 ),
             )
         return {
@@ -480,8 +521,94 @@ class Store:
             "channel": "telegram",
             "mode": mode,
             "language": language,
+            "delivery": delivery,
+            "audio_id": audio_id,
+            "collect_reply": collect_reply,
             "note": "Siz bilan faol qo'ng'iroq tugagach bajariladi. Hali yetkazilmadi.",
         }
+
+    def add_voice_asset(self, asset_id, label, duration):
+        with self.db:
+            self.db.execute(
+                "INSERT INTO voice_assets(id,label,filename,duration,created) VALUES(?,?,?,?,?)",
+                (asset_id, self._title(label), asset_id + ".ogg", duration, utc_now().isoformat()),
+            )
+
+    def voice_asset(self, asset_id):
+        row = self.db.execute(
+            "SELECT * FROM voice_assets WHERE id=? AND archived=0", (asset_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def voice_assets(self):
+        return [
+            dict(r)
+            for r in self.db.execute(
+                "SELECT * FROM voice_assets WHERE archived=0 ORDER BY created DESC LIMIT 100"
+            )
+        ]
+
+    def archive_voice_asset(self, asset_id):
+        with self.db:
+            if self.db.execute(
+                "SELECT 1 FROM outbound_calls WHERE audio_id=? AND state IN ('queued','running')",
+                (asset_id,),
+            ).fetchone():
+                raise ValueError(
+                    "Bu ovoz navbatdagi vazifada ishlatilmoqda. Avval vazifani bekor qiling."
+                )
+            self.db.execute("UPDATE voice_assets SET archived=1 WHERE id=?", (asset_id,))
+        return {"archived": True}
+
+    def queue_notification(self, owner_id, body):
+        digest = hashlib.sha256((str(owner_id) + "|" + body).encode()).hexdigest()
+        with self.db:
+            self.db.execute(
+                "INSERT OR IGNORE INTO owner_outbox(id,owner_id,body,created,retry_after) VALUES(?,?,?,?,?)",
+                (
+                    digest,
+                    owner_id,
+                    body[:12000],
+                    utc_now().isoformat(),
+                    (utc_now() + timedelta(minutes=2)).isoformat(),
+                ),
+            )
+
+    def pending_notification(self, owner_id):
+        row = self.db.execute(
+            "SELECT * FROM owner_outbox WHERE owner_id=? AND state='pending' AND (retry_after IS NULL OR retry_after<=?) AND attempts<3 ORDER BY created LIMIT 1",
+            (owner_id, utc_now().isoformat()),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def finish_notification(self, notification_id, error=None):
+        with self.db:
+            if error:
+                self.db.execute(
+                    "UPDATE owner_outbox SET attempts=attempts+1,state=CASE WHEN attempts>=2 THEN 'failed' ELSE 'pending' END,retry_after=?,last_error=? WHERE id=?",
+                    ((utc_now() + timedelta(minutes=5)).isoformat(), error[:100], notification_id),
+                )
+            else:
+                self.db.execute(
+                    "UPDATE owner_outbox SET state='sent',last_error='' WHERE id=?",
+                    (notification_id,),
+                )
+
+    def notification_status(self, owner_id):
+        return dict(
+            self.db.execute(
+                "SELECT state,COUNT(*) FROM owner_outbox WHERE owner_id=? AND state<>'sent' GROUP BY state",
+                (owner_id,),
+            )
+        )
+
+    def retry_notifications(self, owner_id):
+        with self.db:
+            count = self.db.execute(
+                "UPDATE owner_outbox SET state='pending',attempts=0,retry_after=NULL WHERE owner_id=? AND state='failed'",
+                (owner_id,),
+            ).rowcount
+        return {"queued": count}
 
     def list_contact_calls(self):
         return [
@@ -629,7 +756,9 @@ class Store:
             if not row:
                 raise ValueError("Ovoz yozuvi topilmadi.")
             if row["state"] in {"capturing", "sending", "captured"}:
-                raise ValueError("Ovoz yozuvi hozir tayyorlanyapti yoki yuborilyapti. Tugashini kuting.")
+                raise ValueError(
+                    "Ovoz yozuvi hozir tayyorlanyapti yoki yuborilyapti. Tugashini kuting."
+                )
             state = "ready" if row["filename"] else "captured"
             self.db.execute(
                 "UPDATE recordings SET state=?,attempts=0,retry_after=NULL WHERE id=?",

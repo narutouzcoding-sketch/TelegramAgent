@@ -34,6 +34,7 @@ async def notify_owner(app, report):
     except TelegramPaused:
         raise
     except Exception as exc:
+        app.store.queue_notification(app.settings.owner_id, report)
         log.warning(
             "Call report saved locally; Telegram delivery failed type=%s", type(exc).__name__
         )
@@ -210,7 +211,48 @@ async def execute_job(app, job):
                 "Bu foydalanuvchi ruxsat berilgan kontaktlar ro'yxatida yo'q; telefon terilmadi."
             )
         await app.send_text(f"Qo'ng'iroq #{job['id']}: {job['target']} uchun xabar tayyorlanyapti.")
-        if job.get("mode", "relay") != "relay":
+        if job.get("mode") == "voice":
+            from .voice_library import asset_path, original_voice_task, prepare_voice_call
+
+            if job.get("delivery") == "message":
+                import math
+
+                from telethon.tl.types import DocumentAttributeAudio
+
+                path, asset = asset_path(app.store, job["audio_id"])
+                await app.policy.send(
+                    lambda: app.telegram.send_file(
+                        user,
+                        str(path),
+                        voice_note=True,
+                        caption=f"{app.owner_name} yuborgan asl ovozli xabar.",
+                        attributes=[
+                            DocumentAttributeAudio(
+                                duration=math.ceil(asset["duration"]), voice=True
+                            )
+                        ],
+                    )
+                )
+                app.store.finish_contact_call(
+                    job["id"],
+                    "sent",
+                    "Asl golos Telegram chatga yuborildi; eshitilgani tasdiqlanmagan.",
+                )
+                await notify_owner(
+                    app,
+                    f"Vazifa #{job['id']}: {job['target']} ga asl golos yuborildi. Eshitganini tasdiqlamadi.",
+                )
+                return
+            pcm, intro = await prepare_voice_call(app, job)
+            if job.get("collect_reply"):
+                from .contact_conversation import talk_to_contact
+
+                task = original_voice_task(app.brain, app.owner_name, job, pcm, intro)
+                await talk_to_contact(app, user, job, task)
+                summary = await task.summary()
+            else:
+                await play_relay(app, user, pcm)
+        elif job.get("mode", "relay") != "relay":
             from .contact_conversation import ContactConversation, talk_to_contact
 
             task = ContactConversation(app.brain, app.owner_name, job)

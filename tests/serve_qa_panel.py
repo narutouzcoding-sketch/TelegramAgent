@@ -93,6 +93,17 @@ async def main():
         control.store.save_contact("QA Kursdosh", "@qa_example")
         control.store.save_contact("QA Ikkinchi", "+998901234567")
         control.store.add_plan("SINOV: kitob o‘qish", "Vaqtinchalik QA bazasi")
+        from telegram_agent.voice_library import save_upload
+
+        await save_upload(
+            control.store, tone.read_bytes(), "QA — o'zim yozgan ovoz o'rniga sun'iy signal"
+        )
+        documents = root / "qa-documents"
+        documents.mkdir()
+        (documents / "jadval.txt").write_text(
+            "QA dars jadvali: Dushanba soat 09:00 da matematika.", encoding="utf-8"
+        )
+        await control.documents.index(str(documents))
         control.store.start_recording("a" * 32, 42, "QA — sun'iy signal", None)
         folder = root / "data" / "recordings"
         folder.mkdir(exist_ok=True)

@@ -319,4 +319,10 @@ Haqiqiy sinov muvaffaqiyatli o'tgach, xohlasangiz `install-autostart.ps1` ni ish
 
 ## Professional QA — 2026-11-08
 
-20 ta foydalanuvchi ssenariysi va qo‘shimcha regressiyalar bilan jami 179 ta test o‘tdi. Topilgan 10 ta kamchilik, tuzatishlar, brauzer dalillari va keyingi funksiyalar ustuvorligi [QA.md](QA.md) da. Qayta tekshirish: `powershell -NoProfile -ExecutionPolicy Bypass -File .\qa.ps1`. Alohida, Telegram/AI ulanmaydigan brauzer sinovi: `qa.ps1 -Browser`.
+20 ta foydalanuvchi ssenariysi va qo‘shimcha regressiyalar bilan jami 204 ta test o‘tdi. Topilgan 10 ta kamchilik, tuzatishlar, brauzer dalillari va keyingi funksiyalar ustuvorligi [QA.md](QA.md) da. Qayta tekshirish: `powershell -NoProfile -ExecutionPolicy Bypass -File .\qa.ps1`. Alohida, Telegram/AI ulanmaydigan brauzer sinovi: `qa.ps1 -Browser`.
+
+## Asl ovoz va shaxsiy hujjatlar
+
+Qo‘ng‘iroqlar → Mening asl ovozimni yetkazish: mikrofondan yozish yoki audio fayl tanlash, saqlash, kontakt va vaqtni belgilash, qo‘ng‘iroqda eshittirish yoki chatga golos yuborish. Javobni asl ovozda olish ham bor. Telegramda o‘z golosingizga reply qilib `/voicecall @username`, `/voiceask @username`, `/voicesend @username` ishlating.
+
+Hujjatlar bo‘limi faqat tanlangan mahalliy papka va o‘zingiz qo‘shgan qaydlardan qidiradi. Manba parchalari odatiy cloud AI konteksti yoki TTS ga yuborilmaydi. Zaxira va yetkazilmagan natijalar navbati qo‘shildi. [Qo‘llanma va yakuniy sinov chegaralari](FEATURES.md).

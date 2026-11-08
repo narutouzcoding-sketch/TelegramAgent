@@ -12,6 +12,7 @@ dependencies = [
   "edge-tts>=7.2,<8",
   "av>=11,<17",
   "aiohttp>=3.14,<4",
+  "pypdf>=7,<8",
 ]
 
 [dependency-groups]
