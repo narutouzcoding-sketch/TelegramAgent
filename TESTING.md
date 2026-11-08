@@ -2,6 +2,10 @@
 
 2026-11-07–08 kunlari Windows muhitida bajarildi.
 
+## Qo‘ng‘iroq audio zanjiri — 2026-11-08
+
+272 test; yangi 35 regressiya, brauzerda savol rejimi, real TTS/ASR bilan sun’iy ovoz zanjiri. Kontaktga yangi qo‘ng‘iroq qilinmadi. [Dalil va chegaralar](CALL_AUDIO_FIX.md).
+
 ## Savolga javobni tekshirish — 2026-11-08
 
 237 ta testli yakuniy to‘plam; yangi 33 ta javob/natija regressiyasi. Real Gemini bilan sun’iy misolda salom → javobsiz, bitta qism → qisman, qolgan qism → dalilli javob holatlari tasdiqlandi. Bu haqiqiy kontakt javobi emas. [Batafsil](ANSWER_FIX.md).

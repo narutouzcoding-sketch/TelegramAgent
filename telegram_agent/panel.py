@@ -244,6 +244,9 @@ class PanelControl:
             raise ValueError("Paneldagi ovoz sinovi uchun avval bepul ovoz rejimini tanlang.")
         if not isinstance(message, str) or not 1 <= len(message.strip()) <= 1500:
             raise ValueError("Avval aytiladigan xabarni kiriting (1500 belgigacha).")
+        from .call_intent import effective_call_mode
+
+        mode = effective_call_mode(message, mode)
         now = time.monotonic()
         for token, (path, created) in list(self.audio.items()):
             if now - created > 1800:
@@ -380,6 +383,7 @@ def create_panel(control, password, password_path=None):
         public = request.path in {
             "/",
             "/app.js",
+            "/call-intent.js",
             "/voice-ui.js",
             "/library-ui.js",
             "/style.css",
@@ -677,6 +681,7 @@ def create_panel(control, password, password_path=None):
     for route in (
         "/",
         "/app.js",
+        "/call-intent.js",
         "/voice-ui.js",
         "/library-ui.js",
         "/style.css",

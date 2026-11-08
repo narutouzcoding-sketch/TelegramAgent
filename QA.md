@@ -4,6 +4,8 @@
 
 ## Oxirgi qo‘shimchalar
 
+Qo‘ng‘iroqning audio qabul qilish zanjiri: **272 test**, haqiqiy TTS/ASR orqali sun’iy ovoz sinovi va brauzer tekshiruvi. [CALL_AUDIO_FIX.md](CALL_AUDIO_FIX.md). Quyidagi hisobotlar oldingi bosqichlar qaydi.
+
 Javob olinmagan suhbatni muvaffaqiyat deb ko‘rsatish tuzatildi: **237 ta test o‘tdi**. Dalil, qisman javob va tasdiqlanmagan ovoz holatlari [ANSWER_FIX.md](ANSWER_FIX.md) da. Asl ovoz, hujjatlar va zaxira bosqichining 204 testli hisoboti [FEATURES.md](FEATURES.md) da. Quyidagi 20 ssenariy matritsasi va 179 testli audit oldingi bosqichning qaydi.
 
 ## Natija va sinov chegarasi

@@ -1,4 +1,5 @@
 import asyncio
+import re
 import sqlite3
 from dataclasses import replace
 from datetime import timedelta
@@ -25,6 +26,17 @@ async def login(client):
     response = await client.post("/api/login", json={"password": "test-panel-password"})
     assert response.status == 200
     return {"X-CSRF-Token": (await response.json())["csrf"]}
+
+
+async def test_login_page_scripts_load_before_authentication(panel):
+    _, client = panel
+    response = await client.get("/")
+    scripts = re.findall(r'<script src="([^"]+)"', await response.text())
+    assert "/call-intent.js" in scripts
+    for path in scripts:
+        asset = await client.get(path)
+        assert asset.status == 200, path
+        assert "javascript" in asset.content_type
 
 
 async def connected(control):

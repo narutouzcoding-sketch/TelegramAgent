@@ -131,13 +131,8 @@ async def test_private_document_answer_is_not_sent_to_online_tts(brain, tmp_path
     monkeypatch.setattr(free_voice, "decode_pcm", AsyncMock(return_value=b"\0" * 960))
     voice = FreeVoiceSession(brain, AsyncMock(), "")
 
-    # Drain prepared PCM so speak() completes without opening native transport.
-    async def drain():
-        while True:
-            voice.output.clear()
-            await __import__("asyncio").sleep(0.001)
-
-    pump = __import__("asyncio").create_task(drain())
+    # Run the real sender loop against a mock transport, including send completion.
+    pump = __import__("asyncio").create_task(voice.play())
     try:
         await voice.respond("Hujjatlardan PRIVATE_DOC_MARKER top")
         assert "PRIVATE_DOC_MARKER" in brain.private_delivery.call_args.args[0]

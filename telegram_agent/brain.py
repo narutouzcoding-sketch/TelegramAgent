@@ -43,7 +43,7 @@ TOOLS = [
             "mode": {
                 "type": "string",
                 "enum": ["relay", "ask", "conversation", "record"],
-                "description": "relay: say a fixed message; ask: ask and capture one answer; conversation: brief task-focused dialogue; record: read the provided text as-is and record the original answer without translation or AI.",
+                "description": "ask: ask the question and bring back the recipient answer (use for questions); conversation: brief task-focused dialogue; relay: ONLY a fixed one-way announcement, no answer collected; record: record original voice without AI. Direct questions in relay are upgraded to ask unless the owner explicitly says no answer is needed.",
             },
             "language": {"type": "string", "enum": ["uz", "en", "ru"]},
         },
@@ -494,6 +494,31 @@ class Brain:
                 pass
         self.last_asr = "Whisper (mahalliy)"
         return await self.free_speech.transcribe_pcm48(pcm, language=language)
+
+    async def transcribe_live_pcm48(self, pcm, language="uz"):
+        """Bound live-call latency and never initialize/download a fallback here."""
+        if self.use_native_asr:
+            from .speech_input import pcm48_to_wav
+
+            try:
+                async with asyncio.timeout(8):
+                    text = await self.gemini.transcribe_audio(pcm48_to_wav(pcm), language)
+                self.last_asr = "Gemini audio"
+                return text
+            except (AIUnavailable, TimeoutError):
+                pass
+        if getattr(self.free_speech, "model", None) is None:
+            raise AIUnavailable(
+                "Ovoz tanish xizmati javob bermadi; tayyor mahalliy model yo'q. Asl audio saqlanadi."
+            )
+        self.last_asr = "Whisper (mahalliy)"
+        try:
+            async with asyncio.timeout(6):
+                return await self.free_speech.transcribe_pcm48(pcm, language=language)
+        except TimeoutError:
+            raise AIUnavailable(
+                "Mahalliy ovoz tanish vaqtida tugamadi. Asl audio saqlanadi."
+            ) from None
 
     async def speech(self, text, path):
         from .documents import PrivateReply

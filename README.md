@@ -319,7 +319,7 @@ Haqiqiy sinov muvaffaqiyatli o'tgach, xohlasangiz `install-autostart.ps1` ni ish
 
 ## Professional QA — 2026-11-08
 
-20 ta foydalanuvchi ssenariysi va qo‘shimcha regressiyalar bilan jami 237 ta test o‘tdi. Topilgan 10 ta kamchilik, tuzatishlar, brauzer dalillari va keyingi funksiyalar ustuvorligi [QA.md](QA.md) da. Qayta tekshirish: `powershell -NoProfile -ExecutionPolicy Bypass -File .\qa.ps1`. Alohida, Telegram/AI ulanmaydigan brauzer sinovi: `qa.ps1 -Browser`.
+20 ta foydalanuvchi ssenariysi va qo‘shimcha regressiyalar bilan jami 272 ta test o‘tdi. Topilgan 10 ta kamchilik, tuzatishlar, brauzer dalillari va keyingi funksiyalar ustuvorligi [QA.md](QA.md) da. Qayta tekshirish: `powershell -NoProfile -ExecutionPolicy Bypass -File .\qa.ps1`. Alohida, Telegram/AI ulanmaydigan brauzer sinovi: `qa.ps1 -Browser`.
 
 ## Asl ovoz va shaxsiy hujjatlar
 
@@ -330,3 +330,6 @@ Hujjatlar bo‘limi faqat tanlangan mahalliy papka va o‘zingiz qo‘shgan qayd
 ## Javobni aniq ajratish
 
 Savol rejimi endi salomlashuv yoki ovoz yozuvini muvaffaqiyat deb hisoblamaydi. Javob nutqdagi dalil bilan tekshiriladi; qisman javob, rad etish, javobsiz va faqat yozuv holatlari ajratiladi. Eski dalilsiz muvaffaqiyat belgilari ham to‘g‘rilanadi. [Sabab va tekshiruv](ANSWER_FIX.md).
+
+
+Qo‘ng‘iroqda savolni eshittirish, ovozni tinglash, pauza va uzilish tuzatishlari: [CALL_AUDIO_FIX.md](CALL_AUDIO_FIX.md).

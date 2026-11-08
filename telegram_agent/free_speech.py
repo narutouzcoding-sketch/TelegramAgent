@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 from pathlib import Path
 
 from .ai_access import AIUnavailable
@@ -18,9 +19,12 @@ class FreeSpeech:
         self.settings = settings
         self.model = None
         self.lock = asyncio.Lock()
+        self.load_lock = threading.Lock()
 
-    def _load(self):
-        if self.model is None:
+    def _load(self, allow_download=True):
+        with self.load_lock:
+            if self.model is not None:
+                return
             from faster_whisper import WhisperModel
 
             self.model = WhisperModel(
@@ -29,11 +33,22 @@ class FreeSpeech:
                 compute_type="int8",
                 download_root=str(ROOT / "data" / "models"),
                 cpu_threads=4,
+                local_files_only=not allow_download,
             )
 
     async def prepare(self):
         async with self.lock:
             await asyncio.to_thread(self._load)
+
+    async def prepare_live(self):
+        """Warm only a cached fallback before ringing; never download during a call."""
+        try:
+            async with asyncio.timeout(12):
+                async with self.lock:
+                    await asyncio.to_thread(self._load, False)
+        except Exception:
+            return False
+        return self.model is not None
 
     def _recognize(self, audio, language="uz"):
         self._load()

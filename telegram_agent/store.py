@@ -71,6 +71,7 @@ class Store:
                 "answer_verified": "INTEGER NOT NULL DEFAULT 0",
                 "answer_evidence": "TEXT NOT NULL DEFAULT '[]'",
                 "question_delivered": "INTEGER NOT NULL DEFAULT 0",
+                "diagnostics": "TEXT NOT NULL DEFAULT '{}'",
                 "audio_id": "TEXT",
                 "delivery": "TEXT NOT NULL DEFAULT 'call'",
                 "collect_reply": "INTEGER NOT NULL DEFAULT 0",
@@ -470,6 +471,9 @@ class Store:
             raise ValueError("Aniq kontakt ismi, @username yoki +mamlakat_kodi bilan raqam kerak.")
         if not isinstance(message, str) or not message.strip() or len(message) > 1500:
             raise ValueError("Yetkaziladigan gap 1..1500 belgidan iborat bo'lishi kerak.")
+        from .call_intent import effective_call_mode
+
+        mode = effective_call_mode(message, mode)
         due = parse_due(due_at, self.timezone).isoformat() if due_at else None
         existing = self.db.execute(
             "SELECT id,state FROM outbound_calls WHERE target=? AND message=? "
@@ -493,6 +497,7 @@ class Store:
                 "message": message.strip(),
                 "status": existing["state"],
                 "duplicate_suppressed": True,
+                "mode": mode,
                 "note": "Bu topshiriq allaqachon navbatda yoki bajarilmoqda; takrorlanmadi.",
             }
         if (
@@ -686,16 +691,18 @@ class Store:
         answer_verified=False,
         answer_evidence=(),
         question_delivered=False,
+        diagnostics=None,
     ):
         with self.db:
             self.db.execute(
-                "UPDATE outbound_calls SET transcript=?,summary=?,answer_verified=?,answer_evidence=?,question_delivered=? WHERE id=?",
+                "UPDATE outbound_calls SET transcript=?,summary=?,answer_verified=?,answer_evidence=?,question_delivered=?,diagnostics=? WHERE id=?",
                 (
                     json.dumps(transcript[:22], ensure_ascii=False),
                     summary[:6000],
                     int(bool(answer_verified)),
                     json.dumps(list(answer_evidence)[:10], ensure_ascii=False),
                     int(bool(question_delivered)),
+                    json.dumps(diagnostics or {}, ensure_ascii=False),
                     job_id,
                 ),
             )

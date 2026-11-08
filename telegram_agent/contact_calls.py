@@ -303,6 +303,7 @@ async def execute_job(app, job):
                 answer_verified=task.answer_verified,
                 answer_evidence=[*task.partial_evidence, *task.evidence],
                 question_delivered=task.question_delivered,
+                diagnostics=getattr(task, "voice_diagnostics", {}),
             )
         app.store.finish_contact_call(job["id"], state, reason)
         await notify_owner(
@@ -320,6 +321,7 @@ async def execute_job(app, job):
                 answer_verified=task.answer_verified,
                 answer_evidence=[*task.partial_evidence, *task.evidence],
                 question_delivered=task.question_delivered,
+                diagnostics=getattr(task, "voice_diagnostics", {}),
             )
             app.store.finish_contact_call(job["id"], task.result_state(), summary)
             report = f"Qo'ng'iroq #{job['id']} — {job['target']}\n{summary}"
@@ -342,6 +344,7 @@ async def execute_job(app, job):
                 answer_verified=task.answer_verified,
                 answer_evidence=[*task.partial_evidence, *task.evidence],
                 question_delivered=task.question_delivered,
+                diagnostics=getattr(task, "voice_diagnostics", {}),
             )
 
 

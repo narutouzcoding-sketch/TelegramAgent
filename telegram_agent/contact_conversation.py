@@ -50,9 +50,14 @@ class ContactConversation:
             if self.record_only or self.use_native_asr
             else brain.free_speech.prepare,
             transcribe_pcm48=self.transcribe,
+            prepare_live=getattr(brain.free_speech, "prepare_live", no_prepare),
         )
 
     async def generate(self, instructions, messages, max_output_tokens=384, allow_local=True):
+        async with asyncio.timeout(10):
+            return await self._generate(instructions, messages, max_output_tokens, allow_local)
+
+    async def _generate(self, instructions, messages, max_output_tokens=384, allow_local=True):
         if self.brain.gemini:
             response = await self.brain.gemini.create(
                 instructions,
@@ -145,6 +150,8 @@ class ContactConversation:
         return text[:1800]
 
     async def transcribe(self, pcm):
+        if hasattr(self.brain, "transcribe_live_pcm48"):
+            return await self.brain.transcribe_live_pcm48(pcm, language=self.language)
         if hasattr(self.brain, "transcribe_pcm48"):
             return await self.brain.transcribe_pcm48(pcm, language=self.language)
         return await self.brain.free_speech.transcribe_pcm48(pcm, language=self.language)
@@ -292,8 +299,19 @@ class ContactConversation:
         quotes = list(dict.fromkeys([*self.partial_evidence, *self.evidence]))
         if status not in {"completed", "partial_answer"}:
             words = [r["content"] for r in self.transcript if r["role"] == "user"]
+            diagnostics = getattr(self, "voice_diagnostics", {})
+            cause = ""
+            if diagnostics.get("asr_errors"):
+                cause = (
+                    "\nSabab: ovozni matnga aylantirish xizmati ishlamadi yoki vaqtida tugamadi."
+                )
+            elif diagnostics and not diagnostics.get("input_frames"):
+                cause = "\nSabab: tinglash paytida kiruvchi ovoz olinmadi."
+            elif diagnostics.get("input_frames") and not diagnostics.get("utterances"):
+                cause = "\nOvoz paketlari keldi, lekin tushunarli nutq ajratilmadi."
             return (
                 "Savolga aniq javob olinmadi yoki tasdiqlanmadi."
+                + cause
                 + (
                     "\nTanilgan nutq (javob sifatida tasdiqlanmagan): " + " / ".join(words)[:2000]
                     if words
@@ -347,6 +365,7 @@ async def talk_to_contact(app, user, job, task):
 
         voice = FreeVoiceSession(task, send, introduction)
         try:
+            await voice.prepare_introduction()
             async with asyncio.timeout(app.settings.ring_timeout_seconds + 45):
                 await app.policy.dial(
                     user.id,
@@ -370,7 +389,7 @@ async def talk_to_contact(app, user, job, task):
                     min(job.get("duration_seconds", 180), app.settings.max_call_seconds),
                 )
             except TimeoutError:
-                pass
+                await voice.finish_input()
             if voice.error:
                 raise AIUnavailable(voice.error)
         finally:

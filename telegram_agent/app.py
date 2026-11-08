@@ -209,11 +209,14 @@ class AgentApp:
         @self.calls.on_update(filters.chat_update(ChatUpdate.Status.LEFT_CALL))
         async def ended(_, update):
             if update.chat_id == self.settings.owner_id and self.voice:
-                self.voice.closed.set()
+                if hasattr(self.voice, "remote_end"):
+                    self.voice.remote_end()
+                else:
+                    self.voice.closed.set()
             if update.chat_id == self.relay_target and self.relay_ended:
                 self.relay_ended.set()
                 if self.relay_voice:
-                    self.relay_voice.closed.set()
+                    self.relay_voice.remote_end()
 
         @self.calls.on_update(filters.stream_frame(Direction.INCOMING, Device.MICROPHONE))
         async def audio(_, update):
@@ -355,6 +358,8 @@ class AgentApp:
 
             voice = VoiceSession(self.brain, send, introduction)
             try:
+                if self.settings.voice_provider == "free":
+                    await voice.prepare_introduction()
                 if self.settings.voice_provider == "free" and not self.brain.use_native_asr:
                     await self.brain.free_speech.prepare()
                 # play() returns when the peer has answered and media is connected.
@@ -383,6 +388,8 @@ class AgentApp:
                 try:
                     await asyncio.wait_for(voice.closed.wait(), self.settings.max_call_seconds)
                 except TimeoutError:
+                    if hasattr(voice, "finish_input"):
+                        await voice.finish_input()
                     await self.send_text(
                         "Qo'ng'iroq vaqti chegarasiga yetdi. /call bilan davom eting."
                     )
