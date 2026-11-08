@@ -303,8 +303,10 @@ class ContactConversation:
     async def summary(self):
         if self.connection_failure:
             return self.connection_failure
-        status = self.result_state()
         diagnostics = getattr(self, "voice_diagnostics", {})
+        if diagnostics.get("telegram_accepted") and not diagnostics.get("connected"):
+            return "Telefon qabul qilindi, ammo agentda ovoz kanali ochilmadi. Savol eshittirilmadi. Suhbat yozuvi yaratilmagan."
+        status = self.result_state()
         if (
             "connected" in diagnostics
             and not diagnostics["connected"]
@@ -396,10 +398,16 @@ async def talk_to_contact(app, user, job, task):
 
         async def send(frame):
             await app.calls.send_frame(user.id, Device.MICROPHONE, frame)
+            if signals and any(frame) and not voice.metrics.get("first_outgoing_audio"):
+                voice.metrics["first_outgoing_audio"] = True
+                signals.mark("first_outgoing_audio")
             if recording is not None:
                 recording.write("outgoing", frame)
 
         voice = FreeVoiceSession(task, send, introduction)
+        signals = getattr(app, "call_signals", None)
+        if signals:
+            signals.begin(user.id, voice.metrics, job.get("id"))
         try:
             await voice.prepare_introduction()
             voice.metrics["stage"] = "dialing"
@@ -416,6 +424,8 @@ async def talk_to_contact(app, user, job, task):
                     ),
                 )
                 voice.metrics["connected"] = True
+                if signals:
+                    signals.mark("media_connected")
                 voice.metrics["stage"] = "connected"
                 recording = begin_recording(
                     app, user.id, job.get("target", "Kontakt suhbati"), job.get("id")
@@ -439,4 +449,6 @@ async def talk_to_contact(app, user, job, task):
             with suppress(Exception):
                 await app.calls.leave_call(user.id)
             end_recording(app, recording)
+            if signals:
+                signals.end()
             app.relay_target = app.relay_ended = app.call_task = None

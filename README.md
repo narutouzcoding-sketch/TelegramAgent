@@ -319,7 +319,7 @@ Haqiqiy sinov muvaffaqiyatli o'tgach, xohlasangiz `install-autostart.ps1` ni ish
 
 ## Professional QA — 2026-11-08
 
-20 ta foydalanuvchi ssenariysi va qo‘shimcha regressiyalar bilan jami 307 ta test o‘tdi. Topilgan 10 ta kamchilik, tuzatishlar, brauzer dalillari va keyingi funksiyalar ustuvorligi [QA.md](QA.md) da. Qayta tekshirish: `powershell -NoProfile -ExecutionPolicy Bypass -File .\qa.ps1`. Alohida, Telegram/AI ulanmaydigan brauzer sinovi: `qa.ps1 -Browser`.
+20 ta foydalanuvchi ssenariysi va qo‘shimcha regressiyalar bilan jami 314 ta test o‘tdi. Topilgan 10 ta kamchilik, tuzatishlar, brauzer dalillari va keyingi funksiyalar ustuvorligi [QA.md](QA.md) da. Qayta tekshirish: `powershell -NoProfile -ExecutionPolicy Bypass -File .\qa.ps1`. Alohida, Telegram/AI ulanmaydigan brauzer sinovi: `qa.ps1 -Browser`.
 
 ## Asl ovoz va shaxsiy hujjatlar
 
@@ -339,3 +339,6 @@ Doimiy ishlash va token auditi: [PROFESSIONAL_AUDIT.md](PROFESSIONAL_AUDIT.md). 
 
 
 Ulanmagan qo‘ng‘iroq natijasini to‘g‘ri ko‘rsatish: [CONNECTION_TIMEOUT_FIX.md](CONNECTION_TIMEOUT_FIX.md).
+
+
+Telefon ko‘tarilib ovoz boshlanmagan holat uchun transport tuzatishi va dalil chegarasi: [ACCEPTED_SILENCE_FIX.md](ACCEPTED_SILENCE_FIX.md).

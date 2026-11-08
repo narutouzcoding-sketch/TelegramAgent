@@ -748,6 +748,7 @@ class Store:
             "busy",
             "rejected",
             "privacy_blocked",
+            "connection_failed",
         }:
             raise ValueError("Noto'g'ri qo'ng'iroq holati")
         with self.db:

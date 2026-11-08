@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 from openai import APIError
 from telethon import TelegramClient, events
+from telethon.tl.types import UpdatePhoneCall, UpdatePhoneCallSignalingData
 
 from .ai_access import AIUnavailable, public_ai_error
 from .brain import Brain
@@ -69,6 +70,14 @@ class AgentApp:
             settings.api_hash,
             request_retries=0,
             flood_sleep_threshold=0,
+        )
+        from .call_signals import forward_exported_updates
+
+        forward_exported_updates(
+            self.telegram,
+            lambda dc: (
+                self.call_signals.exported(dc) if getattr(self, "call_signals", None) else None
+            ),
         )
         self.calls = None
         self.voice = None
@@ -215,11 +224,20 @@ class AgentApp:
         from pytgcalls import PyTgCalls, filters
         from pytgcalls.types import ChatUpdate, Device, Direction
 
+        from .call_signals import CallSignals, trace_phone_rpc
         from .contact_calls import RecipientResolver
+
+        self.call_signals = CallSignals(own_id)
+        # Observe before the bridge, so an adapter failure cannot hide acceptance.
+        self.telegram.add_event_handler(
+            self.call_signals.observe,
+            events.Raw(types=(UpdatePhoneCall, UpdatePhoneCallSignalingData)),
+        )
 
         self.recipient_resolver = RecipientResolver(self.telegram, self.store, own_id)
         self.brain.contact_request = self.queue_requested_call
         self.calls = PyTgCalls(self.telegram)
+        trace_phone_rpc(self.calls, self.call_signals)
 
         @self.calls.on_update(filters.chat_update(ChatUpdate.Status.INCOMING_CALL))
         async def incoming(_, update):
@@ -260,6 +278,13 @@ class AgentApp:
         self.spawn(self.safe_call("Salom, eshitaman."))
 
     def receive_audio(self, update):
+        signals = getattr(self, "call_signals", None)
+        if signals is not None and signals.peer_id == update.chat_id:
+            if not signals.metrics.get("incoming_packets"):
+                signals.mark("first_incoming_packet")
+            signals.metrics["incoming_packets"] = signals.metrics.get("incoming_packets", 0) + len(
+                update.frames
+            )
         recording = getattr(self, "active_recording", None)
         if recording is not None and update.chat_id == recording.peer_id:
             recording.write("incoming", b"".join(frame.frame for frame in update.frames))
@@ -372,10 +397,17 @@ class AgentApp:
 
             async def send(frame):
                 await self.calls.send_frame(self.settings.owner_id, Device.MICROPHONE, frame)
+                if signals and any(frame) and not metrics.get("first_outgoing_audio"):
+                    metrics["first_outgoing_audio"] = True
+                    signals.mark("first_outgoing_audio")
                 if recording is not None:
                     recording.write("outgoing", frame)
 
             voice = VoiceSession(self.brain, send, introduction)
+            signals = getattr(self, "call_signals", None)
+            metrics = getattr(voice, "metrics", {})
+            if signals:
+                signals.begin(self.settings.owner_id, metrics)
             try:
                 if self.settings.voice_provider == "free":
                     await voice.prepare_introduction()
@@ -395,9 +427,13 @@ class AgentApp:
                             config=CallConfig(timeout=self.settings.ring_timeout_seconds),
                         ),
                     )
+                    metrics["connected"] = True
+                    if signals:
+                        signals.mark("media_connected")
                     recording = begin_recording(
                         self, self.settings.owner_id, "Yordamchi bilan suhbat"
                     )
+                    metrics["recording_started"] = recording is not None
                     self.voice = voice
                     await self.calls.record(self.settings.owner_id, RecordStream(True, parameters))
                     await voice.start()
@@ -421,6 +457,11 @@ class AgentApp:
                 with suppress(Exception):
                     await self.calls.leave_call(self.settings.owner_id)
                 end_recording(self, recording)
+                if signals:
+                    signals.end()
+                    self.store.set_telegram_state(
+                        "last_call_transport", json.dumps(signals.snapshot(), ensure_ascii=False)
+                    )
                 self.call_task = None
                 self.call_event("ended")
 

@@ -290,6 +290,7 @@ async def execute_job(app, job):
             exc,
             getattr(app.settings, "ring_timeout_seconds", None),
             diagnostics.get("connected", False),
+            diagnostics.get("telegram_accepted", False),
         )
         # Only our explicit input/recipient errors are suitable for the owner; SDK bodies stay private.
         reason = (

@@ -362,6 +362,9 @@ class PanelControl:
                 "last_call_event": json.loads(
                     self.store.telegram_state("last_call_event") or "null"
                 ),
+                "call_transport": self.agent.call_signals.snapshot()
+                if self.connected and getattr(self.agent, "call_signals", None)
+                else json.loads(self.store.telegram_state("last_call_transport") or "null"),
                 "max_calls_per_hour": cfg.max_calls_per_hour,
                 "record_calls": cfg.record_calls,
                 "asr_provider": getattr(brain, "last_asr", "Kutilyapti"),

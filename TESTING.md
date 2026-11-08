@@ -132,3 +132,8 @@ Haqiqiy panel avtomatik Telegramga ulandi. Yordamchi akkauntining 198 ta kontakt
 ## Ulanish natijasi — 2026-11-08
 
 307 test o‘tdi; 9 yangi holat ulanish tasdiqlanmasligi, bandlik, rad etish, maxfiylik, mavjud yozuvsiz eski natijani tuzatish va ASR bilan adashtirmaslikni tekshiradi. [CONNECTION_TIMEOUT_FIX.md](CONNECTION_TIMEOUT_FIX.md).
+
+
+## Qabul qilingan qo‘ng‘iroq signali — 2026-11-08
+
+314 test o‘tdi. 7 yangi test haqiqiy Telethon senderida qabul signali yo‘qolishini takrorlaydi, update forwarding, PyTgCalls adapteri, idempotent hook va diagnostika maxfiyligini tekshiradi. Bu yangi jonli suhbat muvaffaqiyati emas. [ACCEPTED_SILENCE_FIX.md](ACCEPTED_SILENCE_FIX.md).

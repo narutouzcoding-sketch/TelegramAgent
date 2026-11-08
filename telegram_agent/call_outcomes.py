@@ -1,10 +1,20 @@
 """Connection outcomes are different from a connected caller's missing answer."""
 
 
-def connection_outcome(error, timeout=None, connected=False):
+def connection_outcome(error, timeout=None, connected=False, accepted=False):
     if connected:
         return None
     name = type(error).__name__ if not isinstance(error, str) else error
+    if accepted and name not in {
+        "CallBusy",
+        "CallDeclined",
+        "CallDiscarded",
+        "UserPrivacyRestrictedError",
+    }:
+        return (
+            "connection_failed",
+            "Telegram qo'ng'iroq qabul qilinganini bildirdi, ammo ovoz kanali ochilmadi. Savol eshittirilmadi. Suhbat yozuvi yaratilmagan. Avtomatik qayta terilmadi.",
+        )
     wait = f" ({timeout} soniyagacha kutildi)" if timeout else ""
     explanations = {
         "TimedOutAnswer": (
