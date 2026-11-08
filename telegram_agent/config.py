@@ -38,7 +38,7 @@ class Settings:
     local_stt_model: str = "small"
     free_tts_voice: str = "uz-UZ-MadinaNeural"
     max_call_seconds: int = 900
-    ring_timeout_seconds: int = 35
+    ring_timeout_seconds: int = 60
     reminder_grace_hours: int = 24
     enable_contact_calls: bool = False
     enable_voice_calls: bool = False
@@ -105,7 +105,7 @@ class Settings:
             local_stt_model=os.getenv("LOCAL_STT_MODEL", "small").strip(),
             free_tts_voice=os.getenv("FREE_TTS_VOICE", "uz-UZ-MadinaNeural").strip(),
             max_call_seconds=int(os.getenv("MAX_CALL_SECONDS", "900")),
-            ring_timeout_seconds=int(os.getenv("RING_TIMEOUT_SECONDS", "35")),
+            ring_timeout_seconds=int(os.getenv("RING_TIMEOUT_SECONDS", "60")),
             reminder_grace_hours=int(os.getenv("REMINDER_GRACE_HOURS", "24")),
             enable_contact_calls=os.getenv("ENABLE_CONTACT_CALLS", "false").strip().lower()
             == "true",

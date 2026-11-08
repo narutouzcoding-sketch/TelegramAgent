@@ -101,3 +101,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\qa.ps1 -Browser
 XML natija: `data/qa-results.xml`. Sinov paneli: `http://127.0.0.1:8766`, faqat QA paroli `Qa-Sinov-2026!`. Bu ishchi panel paroli emas. Sinov panelini Ctrl+C yoki uning menyusidagi yopish orqali to'xtating.
 
 390×844 o‘lchamda 7 navigatsiya tugmasi ko‘rindi, gorizontal toshish yo‘q. Audio boshqaruvida birinchi avtomatlashtirish urinishi timeout bo‘ldi; qayta ko‘rilgan native Play tugmasi bilan sun’iy signal ijro etildi, davomiylik va oxirgi pozitsiya 2.0065 s, media xatosi yo‘q. Bu dasturdagi audio muvaffaqiyatsizligi deb hisoblanmadi. Qo‘ng‘iroq tarixida faqat QA; terilmadi va Sinov holati tasdiqlandi.
+
+
+Eng yangi ulanish tekshiruvi: **307 test o‘tdi**. №9 da ASR boshlanmagan va yozuv yaratilmagan; noto‘g‘ri umumiy izoh tuzatildi. [CONNECTION_TIMEOUT_FIX.md](CONNECTION_TIMEOUT_FIX.md).

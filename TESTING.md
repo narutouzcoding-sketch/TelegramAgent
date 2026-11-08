@@ -127,3 +127,8 @@ Yangi testlar: sukut/qisqa shovqinni tashlash, gap bo'lagining davomiyligi, bepu
 Haqiqiy mahalliy integratsiya: Gemini nonushta savolini inglizchaga o'tkazdi va AI ekanini aytadigan kirish matnini yaratdi; Edge inglizcha ovoz yaratdi; shu ovoz Whisper orqali “Please bring bread and eggs for breakfast.” deb to'g'ri tanildi; Gemini egasiga o'zbekcha xulosa tayyorladi. Izolyatsiyalangan bazada barcha owner tool deklaratsiyalari bilan haqiqiy qisqa javob olindi. Pulli OpenAI API ishlatilmadi.
 
 Haqiqiy panel avtomatik Telegramga ulandi. Yordamchi akkauntining 198 ta kontakti mahalliy bazaga olindi; avval o'chirilgan akkaunt qayta qo'shilmadi. Keyin foydalanuvchi alohida mahalliy oynada boshqa akkauntga muvaffaqiyatli kirdi. Dastlab ID mos kelmasligi importni to'xtatgan edi; kontakt manbasi va boshqaruvchi roli ajratilib tuzatildi. Shu sessiyadan 27 yangi kontakt olindi, jami 225 ta bo'ldi. Boshqaruvchi ID o'zgartirilmadi. Qo'shimcha testlar kontakt manbasi boshqaruv huquqi olmasligini, sessiya yo'qligida login boshlanmasligini va ovoz uzilganda ham tanilgan qisman javob egasiga qaytarilishini tekshiradi. Dasturchi sinovida boshqa odamga qo'ng'iroq qilinmadi. Shaxsiy jonli qo'ng'iroqdagi ikki tomonlama ovoz, Telegram maxfiylik ruxsatlari va haqiqiy kechikish avtomatlashtirilgan mock orqali to'liq isbotlanmaydi.
+
+
+## Ulanish natijasi — 2026-11-08
+
+307 test o‘tdi; 9 yangi holat ulanish tasdiqlanmasligi, bandlik, rad etish, maxfiylik, mavjud yozuvsiz eski natijani tuzatish va ASR bilan adashtirmaslikni tekshiradi. [CONNECTION_TIMEOUT_FIX.md](CONNECTION_TIMEOUT_FIX.md).

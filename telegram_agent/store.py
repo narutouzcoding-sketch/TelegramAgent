@@ -94,6 +94,7 @@ class Store:
                 if name not in columns:
                     self.db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {declaration}")
         self.db.commit()
+
         # Older versions treated raw audio/greetings as completed answers. Keep
         # their recordings/history, but do not present unverified results as success.
         with self.db:
@@ -114,6 +115,41 @@ class Store:
             "CREATE TABLE IF NOT EXISTS recordings (id TEXT PRIMARY KEY, peer_id INTEGER, label TEXT, job_id INTEGER, created TEXT, state TEXT, filename TEXT DEFAULT '',incoming_filename TEXT DEFAULT '', duration REAL DEFAULT 0, attempts INTEGER DEFAULT 0,retry_after TEXT,last_error TEXT DEFAULT '')"
         )
         self.db.commit()
+
+        # A timeout before any media is not an ASR error and has no call recording.
+        from .call_outcomes import connection_outcome
+
+        old = self.db.execute(
+            "SELECT id,diagnostics,transcript FROM outbound_calls c WHERE state='failed' AND result='TimedOutAnswer' AND question_delivered=0 AND NOT EXISTS(SELECT 1 FROM recordings r WHERE r.job_id=c.id)"
+        ).fetchall()
+        for row in old:
+            try:
+                diagnostic = json.loads(row["diagnostics"])
+                transcript = json.loads(row["transcript"])
+                if (
+                    diagnostic.get("connected")
+                    or diagnostic.get("playback_frames")
+                    or diagnostic.get("input_frames")
+                    or any(t.get("role") == "user" for t in transcript)
+                ):
+                    continue
+            except (ValueError, TypeError, AttributeError):
+                continue
+            state, report = connection_outcome("TimedOutAnswer")
+            diagnostic.update(
+                stage=state, connected=False, recording_started=False, error_code="TimedOutAnswer"
+            )
+            with self.db:
+                self.db.execute(
+                    "UPDATE outbound_calls SET state=?,result=?,summary=?,diagnostics=? WHERE id=?",
+                    (
+                        state,
+                        report[:200],
+                        report,
+                        json.dumps(diagnostic, ensure_ascii=False),
+                        row["id"],
+                    ),
+                )
 
     def add_reminder(self, title, due_at, repeat="none", mode="call"):
         title = self._title(title)
@@ -708,6 +744,10 @@ class Store:
             "answer_unverified",
             "partial_answer",
             "declined",
+            "unanswered",
+            "busy",
+            "rejected",
+            "privacy_blocked",
         }:
             raise ValueError("Noto'g'ri qo'ng'iroq holati")
         with self.db:

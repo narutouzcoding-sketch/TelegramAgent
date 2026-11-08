@@ -110,6 +110,9 @@ class FreeVoiceSession:
         self.last_input = self.last_activity = time.monotonic()
         self.silence_prompts = 0
         self.metrics = dict(
+            stage="preparing",
+            connected=False,
+            recording_started=False,
             input_frames=0,
             low_frames=0,
             playback_frames=0,
@@ -174,6 +177,7 @@ class FreeVoiceSession:
         if not self.closed.is_set() and not self.peer_ended.is_set():
             self.brain.question_delivered = True
             self.accepting = True
+            self.metrics["stage"] = "listening"
             self.last_activity = time.monotonic()
 
     async def respond(self, text):

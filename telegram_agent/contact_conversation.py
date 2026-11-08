@@ -41,6 +41,7 @@ class ContactConversation:
         self.partial_evidence = []
         self.outcome = "no_answer"
         self.question_delivered = False
+        self.connection_failure = ""
 
         async def no_prepare():
             return None
@@ -300,9 +301,21 @@ class ContactConversation:
         return await self.repeat_or_finish()
 
     async def summary(self):
+        if self.connection_failure:
+            return self.connection_failure
         status = self.result_state()
+        diagnostics = getattr(self, "voice_diagnostics", {})
+        if (
+            "connected" in diagnostics
+            and not diagnostics["connected"]
+            and not diagnostics.get("playback_frames")
+            and not self.question_delivered
+        ):
+            return "Qo'ng'iroq ulanishi tasdiqlanmadi. Savol eshittirilmadi. Suhbat yozuvi yaratilmagan."
         audio_note = (
             "\nMavjud asl ovoz yozuvini tekshiring."
+            if self.recording_enabled and diagnostics.get("recording_started")
+            else "\nOvoz yozuvi bo'lsa, Yozuvlar bo'limida ko'rinadi."
             if self.recording_enabled
             else "\nOvoz yozish o'chirilgan."
         )
@@ -389,6 +402,8 @@ async def talk_to_contact(app, user, job, task):
         voice = FreeVoiceSession(task, send, introduction)
         try:
             await voice.prepare_introduction()
+            voice.metrics["stage"] = "dialing"
+            voice.metrics["ring_timeout_seconds"] = app.settings.ring_timeout_seconds
             async with asyncio.timeout(app.settings.ring_timeout_seconds + 45):
                 await app.policy.dial(
                     user.id,
@@ -400,9 +415,12 @@ async def talk_to_contact(app, user, job, task):
                         config=CallConfig(timeout=app.settings.ring_timeout_seconds),
                     ),
                 )
+                voice.metrics["connected"] = True
+                voice.metrics["stage"] = "connected"
                 recording = begin_recording(
                     app, user.id, job.get("target", "Kontakt suhbati"), job.get("id")
                 )
+                voice.metrics["recording_started"] = recording is not None
                 app.relay_voice = voice
                 await app.calls.record(user.id, RecordStream(True, parameters))
                 await voice.start()

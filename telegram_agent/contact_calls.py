@@ -283,6 +283,14 @@ async def execute_job(app, job):
         app.store.finish_contact_call(job["id"], "cancelled", "Qo'ng'iroq to'xtatildi.")
         raise
     except Exception as exc:
+        from .call_outcomes import connection_outcome
+
+        diagnostics = getattr(task, "voice_diagnostics", {}) if task else {}
+        outcome = connection_outcome(
+            exc,
+            getattr(app.settings, "ring_timeout_seconds", None),
+            diagnostics.get("connected", False),
+        )
         # Only our explicit input/recipient errors are suitable for the owner; SDK bodies stay private.
         reason = (
             public_ai_error(exc)
@@ -292,6 +300,13 @@ async def execute_job(app, job):
             else type(exc).__name__
         )
         state = "failed"
+        if outcome:
+            state, summary = outcome
+            reason = summary
+            if task is not None:
+                task.connection_failure = summary
+                diagnostics["error_code"] = type(exc).__name__
+                diagnostics["stage"] = state
         if task is not None:
             summary = await task.summary()
             if task.result_state() in {"completed", "partial_answer", "declined"}:
@@ -308,7 +323,9 @@ async def execute_job(app, job):
         app.store.finish_contact_call(job["id"], state, reason)
         await notify_owner(
             app,
-            f"Qo'ng'iroq #{job['id']}: texnik holat — {reason[:200]}. Qayta terilmadi."
+            f"Qo'ng'iroq #{job['id']}: {summary}"
+            if outcome
+            else f"Qo'ng'iroq #{job['id']}: texnik holat — {reason[:200]}. Qayta terilmadi."
             + ("\n" + summary if summary else "\nSavolga javob olingani tasdiqlanmadi."),
         )
 
