@@ -32,7 +32,7 @@ class FreeSpeech:
                 device="cpu",
                 compute_type="int8",
                 download_root=str(ROOT / "data" / "models"),
-                cpu_threads=4,
+                cpu_threads=2,
                 local_files_only=not allow_download,
             )
 

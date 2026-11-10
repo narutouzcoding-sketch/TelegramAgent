@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 from .ai_access import AIClientPool, AIUnavailable
 from .gemini_text import GeminiText
+from .read_commands import read_reply
 
 
 def tool(name, description, props, required):
@@ -331,6 +332,12 @@ class Brain:
                 daily = self.gemini.ledger.summary()
                 used = daily["providers"].get("gemini", {})
                 return f"Bugungi Gemini sarfi ({daily['day']}, {daily['timezone']}): {used.get('requests', 0)} so'rov; kirish {used.get('input_tokens', 0)}, chiqish {used.get('output_tokens', 0)} token. Sarfi tasdiqlanmagan so'rovlar: {used.get('unknown_usage', 0)}. Bu Google hisobidagi qolgan kvota emas."
+            local_reply = read_reply(self.store, text)
+            if local_reply is not None:
+                # Listing private records should not inflate the next cloud prompt.
+                self.store.remember("user", text, private=True)
+                self.store.remember("assistant", local_reply, private=True)
+                return local_reply
             if not any(
                 w in text.casefold()
                 for w in ("eslat", "rejamga", "qo'sh", "qosh", "qo‘sh", "remind")

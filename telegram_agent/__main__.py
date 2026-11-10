@@ -13,6 +13,7 @@ from dotenv import dotenv_values, set_key
 from .ai_access import AIUnavailable
 from .config import ROOT, Settings
 from .env_defaults import ensure_env_defaults
+from .instance_lock import instance_lock
 from .owner_setup import configured_owner, pair_owner
 from .setup_inputs import prompt_phone, telegram_credentials
 from .telegram_health import ensure_telegram_account
@@ -20,24 +21,8 @@ from .telegram_health import ensure_telegram_account
 
 @contextmanager
 def process_lock():
-    import msvcrt
-
-    (ROOT / "data").mkdir(exist_ok=True)
-    with (ROOT / "data" / "agent.lock").open("a+b") as handle:
-        handle.write(b"0")
-        handle.flush()
-        handle.seek(0)
-        try:
-            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-        except OSError:
-            raise ValueError(
-                "TelegramAgent allaqachon ishlayapti. Ikkinchi nusxa ochilmadi."
-            ) from None
-        try:
-            yield
-        finally:
-            handle.seek(0)
-            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+    with instance_lock(ROOT / "data" / "agent.lock"):
+        yield
 
 
 async def setup(from_env=False):
