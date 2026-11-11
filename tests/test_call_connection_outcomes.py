@@ -34,8 +34,9 @@ def test_connection_timeout_code_is_not_used_to_overwrite_connected_call_evidenc
     assert connection_outcome(TimedOutAnswer(), 60, connected=True) is None
 
 
+@pytest.mark.parametrize("progress_failure", [None, OSError()])
 async def test_timeout_reports_one_connection_outcome_without_retrying_or_using_asr(
-    brain, monkeypatch
+    brain, monkeypatch, progress_failure
 ):
     from telegram_agent import contact_conversation
 
@@ -71,7 +72,7 @@ async def test_timeout_reports_one_connection_outcome_without_retrying_or_using_
         owner_name="QA",
         policy=SimpleNamespace(action=action),
         recipient_resolver=SimpleNamespace(resolve=AsyncMock(return_value=SimpleNamespace(id=77))),
-        send_text=AsyncMock(),
+        send_text=AsyncMock(side_effect=[progress_failure, None] if progress_failure else None),
     )
     brain.store.queue_contact_call("@qa_example", "Qayerdasan?", mode="ask", recipient_user_id=77)
     await execute_job(app, brain.store.claim_contact_call())
@@ -119,3 +120,29 @@ def test_legacy_timeout_without_media_is_repaired_but_real_recordings_are_preser
         assert len(store.list_recordings()) == 1
     finally:
         store.close()
+
+
+@pytest.mark.parametrize("connected", [False, True])
+def test_legacy_local_limit_is_identified_only_without_connection_evidence(tmp_path, connected):
+    path = tmp_path / "legacy-limit.sqlite3"
+    store = Store(path)
+    job = store.queue_contact_call("@qa_example", "Question?", mode="ask")
+    store.save_contact_report(
+        job["id"],
+        [],
+        "Unverified call",
+        diagnostics={"error_code": "TelegramPaused", "connected": connected},
+    )
+    store.finish_contact_call(
+        job["id"], "failed", "Mahalliy qo'ng'iroq chegarasiga yetildi. Keyinroq urinib ko'ring."
+    )
+    store.close()
+    reopened = Store(path)
+    try:
+        [row] = reopened.list_contact_calls()
+        assert row["state"] == ("failed" if connected else "rate_limited")
+        if not connected:
+            assert "telefon terilmagan" in row["summary"]
+            assert json.loads(row["diagnostics"])["error_code"] == "CallRateLimited"
+    finally:
+        reopened.close()

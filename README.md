@@ -224,12 +224,24 @@ Vaqt zonasi: `Asia/Tashkent`. Agent muvaffaqiyatli saqlangan eslatmaning ID si v
 | `/hangup` | Qo'ng'iroqni tugatadi |
 | `/plans` | Ochiq rejalarni ko'rsatadi |
 | `/reminders` | Kutilayotgan eslatmalarni ko'rsatadi |
+| `/reja Kitob o'qish` | AI ishlatmasdan reja saqlaydi |
+| `/eslatma Suv ichish \| 15 daqiqa` | Egaga belgilangan vaqtda Telegram xabarini rejalaydi |
+| `/xabar Matn` | Xabarni qoralama sifatida saqlab, faqat vaqtni so'raydi. `/bekor` qoralamani bekor qiladi. |
+| `/usage` | Bugungi qayd etilgan AI sarfi va provayderlarning kutish vaqtini ko'rsatadi |
 | `/contacts` | Agentga ulashilgan kontaktlar |
 | `/callto @username \| aytiladigan gap` | Bir kishiga xabarni qo'ng'iroq bilan yetkazish |
 | `/calls` | Topshirilgan qo'ng'iroqlar va natijalar |
 | `/cancelcall ID` | Navbatdagi yoki hozir bajarilayotgan kontakt qo'ng'irog'ini to'xtatish |
 | `/status` | Agent holati |
+| `/limits` | Oxirgi 60 daqiqadagi qo'ng'iroq urinishlari va mahalliy limit tugash vaqti |
+| `/sendto @username \| Hozir qayerdasiz?` | Kontaktga matnli Telegram xabarini AI so'rovisiz navbatga qo'yadi |
 | `/help` | Yordam |
+| `/bugun` | Bugungi va kechikkan eslatmalar, ochiq rejalar va vazifalar jamlanmasi |
+| `/qidir kitob` | Saqlangan reja, eslatma, kontakt va vazifa tarixidan mahalliy qidiruv |
+| `/keyin 12 15 daqiqa` | Eslatma #12 ni xabar orqali keyinroq eslatish, takroriy jadval vaqti saqlanadi |
+| `/bajarildi 3` | Reja #3 ni bajarilgan deb belgilash |
+
+Yangi kontakt qo'ng'iroqlarida xabar zaxirasi odatda yoqilgan. Mahalliy qo'ng'iroq limiti band bo'lsa yoki qo'ng'iroq ulanishidan oldin xato chiqsa, shu vazifa Telegram xabariga o'tadi. Paneldagi “Qo'ng'iroq ulanmasa Telegram xabari yuborsin” belgisi har bir vazifa uchun boshqariladi. Matn yozilgan tilda yetkaziladi. Kontakt yuborilgan xabarga 24 soat ichida Reply qilsa, agent ko'pi bilan 10 ta yozma javobni egasiga yetkazadi. Agent ishlashi va internetga ulangan bo'lishi kerak.
 
 Reja qo'shishning o'zi eslatma yaratmaydi. Eslatishni ham ayting. Bir martalik, kunlik va haftalik eslatmalar bor. Murakkab takrorlash (masalan, oyning har uchinchi kuni) hali qo'llanmaydi. Internetdan jonli qidirish qo'shilmagan; joriy yangilik yoki narxni tekshirgan deb hisoblamang.
 
@@ -274,7 +286,9 @@ Model nomlari `.env` orqali o'zgaradi: `TEXT_MODEL`, `GEMINI_MODEL`, `REALTIME_M
 
 ## Gemini va tejamkor sozlamalar
 
-`GEMINI_API_KEY` ni Google AI Studio dan olib faqat mahalliy `.env` ga yozing. `TEXT_PROVIDER=auto` bo'lsa, Gemini kaliti mavjudligida matnli suhbat, reja/eslatma yaratish va kontaktga qo'ng'iroq topshiriqlarini tushunish Gemini orqali ishlaydi. Aks holda OpenAI matn modeli ishlaydi. `TEXT_PROVIDER=gemini` yoki `openai` bilan provayderni qat'iy tanlash mumkin. Bir xizmatdagi kvota tugaganda boshqa xizmatga yashirin o'tish yo'q. `/status` tanlangan matn provayderini ko'rsatadi.
+`GEMINI_API_KEY` ni Google AI Studio dan olib faqat mahalliy `.env` ga yozing. `TEXT_PROVIDER=auto` bo'lsa, Gemini kaliti mavjudligida matnli suhbat, reja/eslatma yaratish va kontaktga qo'ng'iroq topshiriqlarini tushunish Gemini orqali ishlaydi. Aks holda OpenAI matn modeli ishlaydi. `TEXT_PROVIDER=gemini` yoki `openai` asosiy provayderni belgilaydi. `/status` asosiy provayderni ko'rsatadi.
+
+Gemini asosiy bo'lganda, egasi bilan matnli suhbat uchun `.env` da `AI_TEXT_FALLBACKS=groq` va `GROQ_API_KEY` ni sozlab xizmatni qayta ishga tushiring. `AI_TEXT_FALLBACKS=groq,openai` OpenAI matnini keyingi zaxira sifatida qo'shadi va pulli sarf qilishi mumkin. Kutish muddati tugaganida keyingi so'rov Gemini orqali sinab ko'riladi. `/usage` va panel har bir provayder bo'yicha qayd etilgan kirish va chiqish tokenlarini ko'rsatadi. `AI_DAILY_MAX_REQUESTS` va `AI_DAILY_MAX_TOKENS` har bir provayder uchun mahalliy kunlik chegarani belgilaydi. Qiymat `0` bo'lsa, shu mahalliy chegara o'chadi.
 
 Standart Gemini modeli **`gemini-3.1-flash-lite`**, fikrlash darajasi **`minimal`**. 2026-11-07 kungi tekshiruvda u function calling ni qo'llaydi va 3.5 Flash-Lite dan arzonroq. Eski 2.5 Flash-Lite ga kirish yangi foydalanuvchilar uchun cheklangani sabab yangi ulanishda u tanlanmadi. Google model mavjudligi va kvotalarini akkauntingiz uchun `check.ps1 -Online` bilan tekshiring. Bu tekshiruv model ro'yxatini tekshiradi; haqiqiy javob sifatini yoki billing ishlashini isbotlamaydi. Manbalar: [Gemini modellari](https://ai.google.dev/gemini-api/docs/models), [narxlar](https://ai.google.dev/gemini-api/docs/pricing), [OpenAI-compatible API](https://ai.google.dev/gemini-api/docs/openai).
 
@@ -342,3 +356,5 @@ Ulanmagan qo‘ng‘iroq natijasini to‘g‘ri ko‘rsatish: [CONNECTION_TIMEOU
 
 
 Telefon ko‘tarilib ovoz boshlanmagan holat uchun transport tuzatishi va dalil chegarasi: [ACCEPTED_SILENCE_FIX.md](ACCEPTED_SILENCE_FIX.md).
+
+Telefon paneli, maketlar, tungi rejim, kontakt qidiruvi va Android 0.3.1: [PANEL_DESIGN.md](PANEL_DESIGN.md).

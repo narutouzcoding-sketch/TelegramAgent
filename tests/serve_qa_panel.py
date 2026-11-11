@@ -82,7 +82,9 @@ async def main():
             async def close(self):
                 pass
 
-            async def queue_requested_call(self, target, message, **options):
+            async def queue_requested_call(
+                self, target, message, *, expected_recipient_id=None, **options
+            ):
                 row = control.store.queue_contact_call(target, message, **options)
                 with control.store.db:
                     control.store.db.execute(
@@ -94,6 +96,9 @@ async def main():
         control.agent_factory = Worker
         control.store.save_contact("QA Kursdosh", "@qa_example")
         control.store.save_contact("QA Ikkinchi", "+998901234567")
+        for index in range(20):
+            control.store.save_contact(f"QA Sinov {index}", f"@qa_synthetic_{index}")
+        control.store.save_contact("𝑺𝒆𝒗𝒊𝒏𝒄𝒉 kursdosh", "@qa_synthetic_sevinch")
         control.store.add_plan("SINOV: kitob o‘qish", "Vaqtinchalik QA bazasi")
         reminder = control.store.add_reminder(
             "SINOV: yetkazilmagan eslatma",

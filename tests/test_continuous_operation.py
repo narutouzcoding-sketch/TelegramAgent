@@ -132,6 +132,34 @@ async def test_quota_cooldown_survives_adapter_restart(brain):
         await fresh.close()
 
 
+async def test_active_adapters_share_cooldown_across_store_connections(brain, tmp_path):
+    cfg = replace(brain.settings, gemini_key="test", local_fallback_enabled=False)
+    path = tmp_path / "shared.sqlite3"
+    store = Store(path)
+    other_store = Store(path)
+    agent = GeminiText(cfg, store)
+    panel = GeminiText(cfg, other_store)
+    error = RateLimitError(
+        "private",
+        response=Mock(status_code=429, headers={"retry-after": "90"}, request=Mock()),
+        body={},
+    )
+    try:
+        agent.client.chat.completions.create = AsyncMock(side_effect=error)
+        panel.client.chat.completions.create = AsyncMock()
+        with pytest.raises(AIUnavailable):
+            await agent.create("test", [], [])
+        with pytest.raises(AIUnavailable, match="kutish vaqti"):
+            await panel.create("test", [], [])
+        panel.client.chat.completions.create.assert_not_awaited()
+        assert panel.status()["cooldown_seconds"] >= 88
+    finally:
+        await agent.close()
+        await panel.close()
+        store.close()
+        other_store.close()
+
+
 async def test_cancelled_provider_request_remains_unknown_not_zero_tokens(brain):
     cfg = replace(brain.settings, gemini_key="test", local_fallback_enabled=False)
     adapter = GeminiText(cfg, brain.store)
@@ -259,6 +287,7 @@ async def test_uncertain_owner_reminder_recovery_never_redials_and_keeps_future_
     assert row["mode"] == "call" and row["recovery_message_only"] == 1
     app = AgentApp.__new__(AgentApp)
     app.settings = SimpleNamespace(timezone="Asia/Tashkent", enable_voice_calls=True)
+    app.store = store
     app.call_lock = asyncio.Lock()
     app.send_text = AsyncMock()
     app.place_call = AsyncMock()
@@ -268,6 +297,48 @@ async def test_uncertain_owner_reminder_recovery_never_redials_and_keeps_future_
     store.finish(row, now=now, delivery_status="message_sent")
     following = store.list_reminders()[0]
     assert following["mode"] == "call" and not following["recovery_message_only"]
+
+
+async def test_reminder_recovery_uses_same_message_id_and_skips_confirmed_sends(store):
+    now = utc_now()
+    due = now + timedelta(minutes=1)
+    store.add_reminder("Test", due.isoformat(), "daily", "call")
+    first = store.claim_due(due)
+    store.recover_reminders(due, all_inflight=True)
+    retry = store.claim_due(due)
+    assert first["message_random_id"] == retry["message_random_id"]
+    assert not store.confirm_reminder_message(first)
+    store.finish(first, now=due)
+
+    app = AgentApp.__new__(AgentApp)
+    app.settings = SimpleNamespace(timezone="Asia/Tashkent", enable_voice_calls=True)
+    app.store = store
+    app.send_text = AsyncMock()
+    app.place_call = AsyncMock()
+    assert await app.deliver(retry, False) == "message_sent"
+    assert app.send_text.call_args.kwargs == {"random_id": first["message_random_id"]}
+
+    store.recover_reminders(due, all_inflight=True)
+    confirmed = store.claim_due(due)
+    assert await app.deliver(confirmed, False) == "message_sent"
+    app.send_text.assert_awaited_once()
+    app.place_call.assert_not_awaited()
+    store.finish(confirmed, now=due)
+    following = store.claim_due(due + timedelta(days=1))
+    assert following["message_random_id"] != first["message_random_id"]
+    assert not following["message_confirmed"]
+
+
+async def test_delivered_reminder_is_not_retried_when_call_status_fails():
+    app = AgentApp.__new__(AgentApp)
+    app.settings = SimpleNamespace(timezone="Asia/Tashkent", enable_voice_calls=True)
+    app.call_lock = asyncio.Lock()
+    app.send_text = AsyncMock(side_effect=[None, OSError()])
+    app.place_call = AsyncMock(side_effect=TimeoutError())
+    reminder = {"id": 1, "title": "QA", "due": utc_now().isoformat(), "mode": "call"}
+    assert await app.deliver(reminder, False) == "message_fallback"
+    assert app.send_text.await_count == 2
+    app.place_call.assert_awaited_once()
 
 
 def test_third_recording_send_crash_is_not_misleading_ready_forever(store):
@@ -360,6 +431,7 @@ async def test_critical_delivery_worker_crash_is_not_silently_healthy(brain, mon
     monkeypatch.setattr(module, "configured_owner", AsyncMock(return_value=User(id=42)))
     app = AgentApp.__new__(AgentApp)
     app.settings, app.store = brain.settings, brain.store
+    app.brain = brain
     app.policy = TelegramPolicy(brain.settings, brain.store)
     app.telegram = SimpleNamespace(
         connect=AsyncMock(),

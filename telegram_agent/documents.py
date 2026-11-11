@@ -50,7 +50,24 @@ class DocumentLibrary:
             "skipped": int(cfg.get("skipped", "0")),
             "local_only": True,
             "formats": sorted(SUPPORTED),
+            "items": [
+                dict(row)
+                for row in self.store.db.execute(
+                    "SELECT id,source,title,kind,created,LENGTH(body) AS characters FROM documents ORDER BY created DESC,title LIMIT 300"
+                )
+            ],
         }
+
+    def document(self, document_id):
+        row = self.store.db.execute("SELECT * FROM documents WHERE id=?", (document_id,)).fetchone()
+        if row is None:
+            raise ValueError("Hujjat topilmadi. Ro'yxatni yangilang.")
+        if row["kind"] == "file":
+            root = self.settings().get("folder")
+            path = (Path(root or "") / row["source"]).resolve()
+            if not root or not path.is_relative_to(Path(root)) or not path.is_file():
+                raise ValueError("Manba fayli topilmadi. Ulangan papkani yangilang.")
+        return dict(row)
 
     @staticmethod
     def validate_folder(value):

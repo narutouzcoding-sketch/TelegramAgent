@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 from .ai_access import AIUnavailable
 from .answer_evidence import echo_of_question, greeting_or_clarification, parse_verdict, refusal
+from .telegram_policy import CallRateLimited
 
 LANGUAGES = {"uz": "Uzbek", "en": "English", "ru": "Russian"}
 THANKS = {
@@ -395,6 +396,7 @@ async def talk_to_contact(app, user, job, task):
         app.relay_target, app.relay_ended = user.id, asyncio.Event()
         parameters = AudioParameters(bitrate=48000, channels=1)
         recording = None
+        rate_limited = False
 
         async def send(frame):
             await app.calls.send_frame(user.id, Device.MICROPHONE, frame)
@@ -443,11 +445,15 @@ async def talk_to_contact(app, user, job, task):
                 await voice.finish_input()
             if voice.error:
                 raise AIUnavailable(voice.error)
+        except CallRateLimited:
+            rate_limited = True
+            raise
         finally:
             app.relay_voice = None
             await voice.close()
-            with suppress(Exception):
-                await app.calls.leave_call(user.id)
+            if not rate_limited:
+                with suppress(Exception):
+                    await app.calls.leave_call(user.id)
             end_recording(app, recording)
             if signals:
                 signals.end()

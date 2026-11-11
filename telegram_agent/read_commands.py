@@ -8,6 +8,45 @@ def read_reply(store, text):
     normalized = normalized.translate(str.maketrans({"‘": "'", "’": "'", "ʻ": "'", "ʼ": "'"}))
     normalized = normalized.rstrip(" .?!")
     if normalized in {
+        "/today",
+        "/bugun",
+        "bugun",
+        "bugungi ishlarim",
+        "bugun nimalar bor",
+        "bugungi rejalarimni ko'rsat",
+    }:
+        day = store.daily_overview()
+        counts = day["reminder_counts"]
+        lines = [
+            f"{day['date']} · {day['timezone']}",
+            f"Ochiq rejalar {day['open_plans']}. Bugungacha eslatmalar {counts['total']}, kechikkan {counts['overdue']}, xatoli {counts['failed']}.",
+        ]
+        lines.extend(f"Reja #{row['id']} — {row['title'][:160]}" for row in day["plans"])
+        lines.extend(
+            f"Eslatma #{row['id']} — {row['title'][:160]} · {row['due_local']} · {row['state']}"
+            for row in day["reminders"]
+        )
+        lines.extend(
+            f"Vazifa #{row['id']} — {row['target'][:100]} · {row['state']}" for row in day["tasks"]
+        )
+        return "\n".join(lines)
+    if normalized in {"/find", "/qidir"}:
+        return "Masalan /qidir kitob. Reja, eslatma, kontakt va yuborilgan vazifalardan qidiraman."
+    if normalized.startswith(("/find ", "/qidir ")):
+        query = text.strip().split(maxsplit=1)[1]
+        try:
+            rows = store.search_local(query)
+        except ValueError as exc:
+            return str(exc)
+        labels = {"plan": "Reja", "reminder": "Eslatma", "contact": "Kontakt", "task": "Vazifa"}
+        return (
+            "\n".join(
+                f"{labels[row['kind']]} #{row['id']} — {row['title']} · {row['state']}\n{row['snippet'][:250]}"
+                for row in rows[:10]
+            )
+            or "Mos yozuv topilmadi. Boshqa so'z bilan qidiring."
+        )
+    if normalized in {
         "/plans",
         "rejalarim",
         "rejalar",

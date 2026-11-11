@@ -23,6 +23,9 @@ class Settings:
     gemini_key: str = field(default="", repr=False)
     gemini_model: str = "gemini-3.1-flash-lite"
     gemini_reasoning_effort: str = "minimal"
+    groq_key: str = field(default="", repr=False)
+    groq_model: str = "openai/gpt-oss-20b"
+    text_fallbacks: tuple[str, ...] = ()
     text_max_output_tokens: int = 1200
     history_messages: int = 10
     history_max_chars: int = 10000
@@ -53,6 +56,7 @@ class Settings:
     gemini_audio_asr: bool = False
     ai_daily_max_requests: int = 0
     ai_daily_max_tokens: int = 0
+    panel_host: str = "127.0.0.1"
 
     @classmethod
     def load(cls, require_telegram=True):
@@ -90,6 +94,15 @@ class Settings:
             gemini_key=os.getenv("GEMINI_API_KEY", "").strip(),
             gemini_model=os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite"),
             gemini_reasoning_effort=os.getenv("GEMINI_REASONING_EFFORT", "minimal"),
+            groq_key=os.getenv("GROQ_API_KEY", "").strip(),
+            groq_model=os.getenv("GROQ_MODEL", "openai/gpt-oss-20b").strip(),
+            text_fallbacks=tuple(
+                dict.fromkeys(
+                    name.strip().lower()
+                    for name in os.getenv("AI_TEXT_FALLBACKS", "").split(",")
+                    if name.strip()
+                )
+            ),
             text_max_output_tokens=int(os.getenv("TEXT_MAX_OUTPUT_TOKENS", "1200")),
             history_messages=int(os.getenv("HISTORY_MESSAGES", "10")),
             history_max_chars=int(os.getenv("HISTORY_MAX_CHARS", "10000")),
@@ -125,6 +138,7 @@ class Settings:
             gemini_audio_asr=os.getenv("GEMINI_AUDIO_ASR", "true").strip().lower() == "true",
             ai_daily_max_requests=int(os.getenv("AI_DAILY_MAX_REQUESTS", "0")),
             ai_daily_max_tokens=int(os.getenv("AI_DAILY_MAX_TOKENS", "0")),
+            panel_host=os.getenv("PANEL_HOST", "127.0.0.1").strip(),
         )
         ZoneInfo(result.timezone)
         if result.ai_daily_max_requests < 0 or result.ai_daily_max_tokens < 0:
@@ -148,6 +162,12 @@ class Settings:
             raise ValueError("FREE_TTS_VOICE: uz-UZ-MadinaNeural yoki uz-UZ-SardorNeural.")
         if result.text_provider not in {"auto", "openai", "gemini"}:
             raise ValueError("TEXT_PROVIDER auto, openai yoki gemini bo'lishi kerak.")
+        if set(result.text_fallbacks) - {"groq", "openai"}:
+            raise ValueError("AI_TEXT_FALLBACKS: groq yoki openai, vergul bilan ajratiladi.")
+        if result.panel_host not in {"127.0.0.1", "0.0.0.0"}:
+            raise ValueError("PANEL_HOST: 127.0.0.1 yoki 0.0.0.0 bo'lsin.")
+        if "groq" in result.text_fallbacks and not result.groq_model:
+            raise ValueError("GROQ_MODEL qiymatini kiriting.")
         if result.voice_provider == "free" and result.resolved_text_provider != "gemini":
             raise ValueError(
                 "VOICE_PROVIDER=free uchun GEMINI_API_KEY va TEXT_PROVIDER=gemini kerak."

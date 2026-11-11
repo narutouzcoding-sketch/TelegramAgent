@@ -14,6 +14,10 @@ def estimate_input(instructions, messages, tools):
     text = len(instructions) + len(json.dumps(tools, ensure_ascii=False))
     audio = 0
     for message in messages:
+        text += len(str(message.get("role", "")))
+        text += len(str(message.get("tool_call_id", "")))
+        if message.get("tool_calls"):
+            text += len(json.dumps(message["tool_calls"], ensure_ascii=False))
         content = message.get("content", "") or ""
         if isinstance(content, list):
             for part in content:

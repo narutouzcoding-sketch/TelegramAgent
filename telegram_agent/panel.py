@@ -9,6 +9,7 @@ import secrets
 import sqlite3
 import time
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 
 from aiohttp import ClientError, web
@@ -20,6 +21,7 @@ from .app import AgentApp
 from .brain import Brain
 from .config import ROOT
 from .contact_calls import RecipientResolver, relay_text
+from .panel_auth import PanelSessions, secure_request
 from .store import Store
 
 log = logging.getLogger(__name__)
@@ -49,6 +51,7 @@ class PanelControl:
         self.chat_waiters = 0
         self.control_lock = asyncio.Lock()
         self.contact_sync_lock = asyncio.Lock()
+        self.call_request_lock = asyncio.Lock()
         self.audio = {}
         from .documents import DocumentLibrary
 
@@ -168,14 +171,31 @@ class PanelControl:
         self.agent.policy.ensure_active()
         return self.agent
 
-    async def ask(self, text):
+    async def ask(self, text, request_id=None):
         if not isinstance(text, str) or not text.strip() or len(text) > 12000:
             raise ValueError("Xabar 1..12000 belgidan iborat bo'lsin.")
+        if request_id is not None and (
+            not isinstance(request_id, str) or not 16 <= len(request_id) <= 100
+        ):
+            raise ValueError("So'rov identifikatori noto'g'ri. Sahifani yangilang.")
+        key = "panel-chat:" + request_id if request_id else None
+        fingerprint = hashlib.sha256(text.strip().encode()).hexdigest()
+
+        def receipt():
+            cached = self.store.cached_tool(key) if key else None
+            if cached and cached["fingerprint"] != fingerprint:
+                raise ValueError("Bu identifikator boshqa so'rovga tegishli.")
+            return cached["result"] if cached else None
+
+        if result := receipt():
+            return result
         if self.chat_waiters >= 4:
             raise ValueError("Navbatda 4 ta xabar bor. Biroz kuting; xabaringiz yuborilmadi.")
         self.chat_waiters += 1
         try:
             async with self.chat_lock:
+                if result := receipt():
+                    return result
                 if self.connected:
                     brain = self.agent.brain
                 else:
@@ -187,7 +207,10 @@ class PanelControl:
                             self.store,
                         )
                     brain = self.idle_brain
-                return {"reply": await brain.answer(text.strip())}
+                result = {"reply": await brain.answer(text.strip())}
+                if key:
+                    self.store.cache_tool(key, {"fingerprint": fingerprint, "result": result})
+                return result
         finally:
             self.chat_waiters -= 1
 
@@ -227,7 +250,35 @@ class PanelControl:
         self.refresh_settings()
         return result
 
-    async def call_contact(
+    def apply_once(self, action, data, operation):
+        request_id = data.get("request_id")
+        if request_id is None:
+            return operation()
+        if not isinstance(request_id, str) or not 16 <= len(request_id) <= 100:
+            raise ValueError("So'rov identifikatori noto'g'ri. Sahifani yangilang.")
+        fingerprint = hashlib.sha256(
+            json.dumps(
+                {key: value for key, value in data.items() if key != "request_id"},
+                sort_keys=True,
+                ensure_ascii=False,
+            ).encode()
+        ).hexdigest()
+        key = "panel-write:" + action + ":" + request_id
+        if cached := self.store.cached_tool(key):
+            if cached["fingerprint"] != fingerprint:
+                raise ValueError("Bu identifikator boshqa so'rovga tegishli.")
+            return cached["result"]
+        # The mutation and receipt are synchronous: another HTTP task cannot
+        # interleave while this request is being applied.
+        result = operation()
+        self.store.cache_tool(key, {"fingerprint": fingerprint, "result": result})
+        return result
+
+    async def call_contact(self, *args, **kwargs):
+        async with self.call_request_lock:
+            return await self._call_contact(*args, **kwargs)
+
+    async def _call_contact(
         self,
         contact_id,
         message,
@@ -241,9 +292,37 @@ class PanelControl:
         audio_id=None,
         delivery="call",
         collect_reply=False,
+        fallback_to_message=True,
     ):
+        if not isinstance(request_id, str) or not 16 <= len(request_id) <= 100:
+            raise ValueError("So'rov identifikatori yo'q. Sahifani yangilang.")
+        fingerprint = hashlib.sha256(
+            json.dumps(
+                [
+                    contact_id,
+                    target,
+                    message,
+                    due_at,
+                    mode,
+                    language,
+                    max_turns,
+                    duration_seconds,
+                    audio_id,
+                    delivery,
+                    collect_reply,
+                    fallback_to_message,
+                ],
+                ensure_ascii=False,
+            ).encode()
+        ).hexdigest()
+        key = "panel-call:" + request_id
+        cached = self.store.cached_tool(key)
+        if cached:
+            if cached["fingerprint"] != fingerprint:
+                raise ValueError("Bu identifikator boshqa so'rovga tegishli.")
+            return cached["result"]
         agent = self.require_agent()
-        if not agent.settings.enable_voice_calls:
+        if mode != "text" and not fallback_to_message and not agent.settings.enable_voice_calls:
             raise ValueError("Ovozli rejim sozlanmagan. free-voice.ps1 orqali avval ovozni sinang.")
         if mode == "voice":
             from .voice_library import asset_path
@@ -252,17 +331,6 @@ class PanelControl:
             message = "Asl ovoz: " + asset["label"]
         if not isinstance(message, str) or not message.strip() or len(message) > 1500:
             raise ValueError("Aytiladigan xabar 1..1500 belgidan iborat bo'lsin.")
-        if not isinstance(request_id, str) or not 16 <= len(request_id) <= 100:
-            raise ValueError("So'rov identifikatori yo'q. Sahifani yangilang.")
-        fingerprint = hashlib.sha256(
-            f"{contact_id}|{target}|{message}|{due_at}|{mode}|{language}|{max_turns}|{duration_seconds}|{audio_id}|{delivery}|{collect_reply}".encode()
-        ).hexdigest()
-        key = "panel-call:" + request_id
-        cached = self.store.cached_tool(key)
-        if cached:
-            if cached["fingerprint"] != fingerprint:
-                raise ValueError("Bu identifikator boshqa so'rovga tegishli.")
-            return cached["result"]
         self.refresh_settings()
         options = dict(
             due_at=due_at or None,
@@ -273,14 +341,28 @@ class PanelControl:
             audio_id=audio_id,
             delivery=delivery,
             collect_reply=collect_reply,
+            fallback_to_message=fallback_to_message,
         )
         if contact_id:
             row = self.contact(contact_id)
             if not row["call_allowed"] or not row["telegram_id"]:
-                raise ValueError("Avval kontaktning Telegram akkauntini tekshirib, ruxsat bering.")
-            result = self.store.queue_contact_call(
-                row["reference"], message, recipient_user_id=row["telegram_id"], **options
-            )
+                result = await agent.queue_requested_call(
+                    row["reference"],
+                    message,
+                    expected_recipient_id=row["telegram_id"],
+                    **options,
+                )
+            else:
+                result = self.store.queue_contact_call(
+                    row["reference"],
+                    message,
+                    recipient_user_id=row["telegram_id"],
+                    call_limits=(
+                        agent.settings.call_cooldown_seconds,
+                        agent.settings.max_calls_per_hour,
+                    ),
+                    **options,
+                )
         elif isinstance(target, str) and target.strip():
             result = await agent.queue_requested_call(target.strip(), message, **options)
         else:
@@ -345,19 +427,32 @@ class PanelControl:
         if self.running and self.agent.ready.is_set() and not self.connected:
             phase = "reconnecting"
         cfg = self.runtime_settings()
+        restriction = self.store.telegram_state("restriction_latch") or ""
+        pause_until = self.store.telegram_state("pause_until") or ""
+        try:
+            from .store import utc_now
+
+            paused = bool(pause_until and datetime.fromisoformat(pause_until) > utc_now())
+        except (ValueError, TypeError):
+            paused = False
         brain = self.agent.brain if self.connected else self.idle_brain
         adapter = getattr(brain, "gemini", None)
+        backup_status = getattr(brain, "text_backup_status", None)
         return {
             "agent": {
                 "phase": phase,
                 "running": self.connected,
                 "worker_running": self.running,
+                "telegram_paused": paused,
+                "telegram_pause_until": pause_until if paused else "",
+                "telegram_restriction_reason": restriction,
                 "error": self.last_error,
                 "owner_name": self.agent.owner_name if self.connected else "",
                 "timezone": cfg.timezone,
                 "text_provider": cfg.resolved_text_provider,
                 "voice_provider": cfg.voice_provider,
                 "voice_enabled": cfg.enable_voice_calls,
+                "gemini_audio_asr": cfg.resolved_text_provider == "gemini" and cfg.gemini_audio_asr,
                 "active_call": bool(self.connected and self.agent.call_lock.locked()),
                 "last_call_event": json.loads(
                     self.store.telegram_state("last_call_event") or "null"
@@ -366,18 +461,24 @@ class PanelControl:
                 if self.connected and getattr(self.agent, "call_signals", None)
                 else json.loads(self.store.telegram_state("last_call_transport") or "null"),
                 "max_calls_per_hour": cfg.max_calls_per_hour,
+                "call_budget": self.store.call_budget(
+                    cfg.call_cooldown_seconds, cfg.max_calls_per_hour
+                ),
                 "record_calls": cfg.record_calls,
                 "asr_provider": getattr(brain, "last_asr", "Kutilyapti"),
                 "ai_status": adapter.status()
                 if adapter is not None and hasattr(adapter, "status")
                 else {"daily": self.usage_ledger.summary()},
+                "ai_backups": backup_status() if callable(backup_status) else {},
                 "reconnect_attempts": self.reconnect_attempts,
-                "telegram_restricted": bool(self.store.telegram_state("restriction_latch")),
+                "telegram_restricted": bool(restriction),
             },
             "plans": self.store.list_plans(),
+            "today": self.store.daily_overview(),
+            "workspace": self.store.workspace_overview(),
             "reminders": self.store.list_reminders(),
             "contacts": self.store.list_contacts(),
-            "calls": self.store.list_contact_calls(),
+            "calls": self.store.list_contact_calls(include_active=True),
             "messages": self.store.history(40),
             "recordings": self.store.list_recordings(),
             "voice_assets": self.store.voice_assets(),
@@ -397,28 +498,28 @@ class PanelControl:
 def create_panel(control, password, password_path=None):
     salt = secrets.token_bytes(16)
     digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 200000)
-    sessions, attempts = {}, {}
+    sessions, attempts = PanelSessions(control.store), {}
     active_password = password
+    password_lock = asyncio.Lock()
 
     async def reload_password():
         nonlocal digest, active_password
         if password_path is None:
             return None
-        try:
-            candidate = read_password(password_path)
-        except (OSError, UnicodeError):
-            sessions.clear()
-            return "Panel parol fayli topilmadi. data/panel-password.txt ni tekshiring."
-        if candidate != active_password:
-            sessions.clear()
-            if not 12 <= len(candidate) <= 256:
-                return (
-                    "Panel paroli 12..256 belgidan iborat bo'lsin. Faylni saqlang va qayta kiring."
+        async with password_lock:
+            try:
+                candidate = read_password(password_path)
+            except (OSError, UnicodeError):
+                sessions.revoke_all()
+                return "Panel parol fayli topilmadi. data/panel-password.txt ni tekshiring."
+            if candidate != active_password:
+                sessions.revoke_all()
+                if not 12 <= len(candidate) <= 256:
+                    return "Panel paroli 12..256 belgidan iborat bo'lsin. Faylni saqlang va qayta kiring."
+                digest = await asyncio.to_thread(
+                    hashlib.pbkdf2_hmac, "sha256", candidate.encode(), salt, 200000
                 )
-            digest = await asyncio.to_thread(
-                hashlib.pbkdf2_hmac, "sha256", candidate.encode(), salt, 200000
-            )
-            active_password = candidate
+                active_password = candidate
         return None
 
     @web.middleware
@@ -428,15 +529,13 @@ def create_panel(control, password, password_path=None):
             return web.json_response({"error": password_error}, status=503)
         if request.method not in {"GET", "HEAD"}:
             origin = request.headers.get("Origin")
-            if origin and origin != f"{request.scheme}://{request.host}":
+            scheme = "https" if secure_request(request) else request.scheme
+            if origin and origin != f"{scheme}://{request.host}":
                 raise web.HTTPForbidden(text="Origin rejected")
             if request.content_type != "application/json" and request.path != "/api/voice-upload":
                 raise web.HTTPBadRequest(text="JSON required")
         token = request.cookies.get("ta_session", "")
-        session = sessions.get(token)
-        if session and session["expires"] < time.monotonic():
-            del sessions[token]
-            session = None
+        session = sessions.get(token, active_password) if not password_error else None
         public = request.path in {
             "/",
             "/app.js",
@@ -444,6 +543,12 @@ def create_panel(control, password, password_path=None):
             "/voice-ui.js",
             "/library-ui.js",
             "/style.css",
+            "/inter-latin.woff2",
+            "/reference-colors.css",
+            "/design.css",
+            "/workspace-ui.js",
+            "/contact-picker.js",
+            "/theme.js",
             "/icon.svg",
             "/icon-192.png",
             "/icon-512.png",
@@ -451,6 +556,7 @@ def create_panel(control, password, password_path=None):
             "/sw.js",
             "/api/login",
             "/api/session",
+            "/TelegramAgent.apk",
         }
         if not public:
             if session is None:
@@ -495,10 +601,33 @@ def create_panel(control, password, password_path=None):
         name = request.path.lstrip("/") or "index.html"
         return web.FileResponse(ASSETS / name)
 
+    async def mobile_apk(request):
+        path = control.root / "data" / "downloads" / "TelegramAgent.apk"
+        if not path.is_file():
+            raise web.HTTPNotFound(text="Android ilovasi hali yig'ilmagan.")
+        return web.FileResponse(
+            path,
+            headers={
+                "Content-Type": "application/vnd.android.package-archive",
+                "Content-Disposition": 'attachment; filename="TelegramAgent.apk"',
+            },
+        )
+
     async def session_status(request):
         value = request[SESSION_KEY]
         return web.json_response(
             {"authenticated": bool(value), "csrf": value["csrf"] if value else None}
+        )
+
+    async def chat_export(request):
+        rows = control.store.history(40)
+        content = "\n\n".join(
+            ("Siz" if row["role"] == "user" else "Agent") + ": " + row["content"] for row in rows
+        )
+        return web.Response(
+            text=content,
+            content_type="text/plain",
+            headers={"Content-Disposition": 'attachment; filename="agent-suhbat.txt"'},
         )
 
     async def login(request):
@@ -517,24 +646,23 @@ def create_panel(control, password, password_path=None):
         check = await asyncio.to_thread(
             hashlib.pbkdf2_hmac, "sha256", supplied.encode(), salt, 200000
         )
+        if password_error := await reload_password():
+            return web.json_response({"error": password_error}, status=503)
         if not hmac.compare_digest(check, digest):
             return web.json_response({"error": "Parol noto'g'ri."}, status=401)
         attempts.pop(ip, None)
-        for key, value in list(sessions.items()):
-            if value["expires"] < now:
-                del sessions[key]
-        if len(sessions) >= 20:
-            sessions.pop(next(iter(sessions)))
-        token, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(24)
-        sessions[token] = {"csrf": csrf, "expires": now + 8 * 3600}
+        remember = data.get("remember", False)
+        if type(remember) is not bool:
+            raise ValueError("Qurilmani eslab qolish belgisi noto'g'ri.")
+        token, csrf, lifetime = sessions.issue(active_password, remember)
         response = web.json_response({"authenticated": True, "csrf": csrf})
         response.set_cookie(
             "ta_session",
             token,
             httponly=True,
             samesite="Strict",
-            secure=request.secure,
-            max_age=8 * 3600,
+            secure=secure_request(request),
+            max_age=lifetime if remember else None,
         )
         return response
 
@@ -546,7 +674,7 @@ def create_panel(control, password, password_path=None):
         if action == "state" and request.method == "GET":
             result = control.state()
         elif action == "logout":
-            sessions.pop(request.cookies.get("ta_session", ""), None)
+            sessions.revoke(request.cookies.get("ta_session", ""))
             response = web.json_response({"ok": True})
             response.del_cookie("ta_session")
             return response
@@ -558,7 +686,7 @@ def create_panel(control, password, password_path=None):
             result = await control.stop()
             control.shutdown.set()
         elif action == "chat":
-            result = await control.ask(data.get("text"))
+            result = await control.ask(data.get("text"), data.get("request_id"))
         elif action == "library-index":
             if control.document_lock.locked():
                 raise ValueError("Hujjatlar hozir yangilanyapti. Tugashini kuting.")
@@ -571,7 +699,11 @@ def create_panel(control, password, password_path=None):
         elif action == "library-search":
             result = {"results": control.documents.search(data.get("query"))}
         elif action == "library-note":
-            result = control.documents.add_note(data.get("title"), data.get("body"))
+            result = control.apply_once(
+                action,
+                data,
+                lambda: control.documents.add_note(data.get("title"), data.get("body")),
+            )
         elif action == "archive-voice":
             result = control.store.archive_voice_asset(data.get("id"))
         elif action == "retry-notifications":
@@ -591,19 +723,31 @@ def create_panel(control, password, password_path=None):
             async with control.backup_lock:
                 result = await create_backup(control.store)
         elif action == "plan":
-            result = (
-                control.store.update_plan(int(data["id"]), data["title"], data.get("details", ""))
-                if data.get("id")
-                else control.store.add_plan(data["title"], data.get("details", ""))
+            result = control.apply_once(
+                action,
+                data,
+                lambda: (
+                    control.store.update_plan(
+                        int(data["id"]), data["title"], data.get("details", "")
+                    )
+                    if data.get("id")
+                    else control.store.add_plan(data["title"], data.get("details", ""))
+                ),
             )
+        elif action == "library-document":
+            result = control.documents.document(data["id"])
         elif action == "complete-plan":
             result = control.store.complete_plan(int(data["id"]))
         elif action == "reminder":
             args = {k: data[k] for k in ("title", "due_at", "repeat", "mode")}
-            result = (
-                control.store.update_reminder(int(data["id"]), **args)
-                if data.get("id")
-                else control.store.add_reminder(**args)
+            result = control.apply_once(
+                action,
+                data,
+                lambda: (
+                    control.store.update_reminder(int(data["id"]), **args)
+                    if data.get("id")
+                    else control.store.add_reminder(**args)
+                ),
             )
         elif action == "cancel-reminder":
             result = control.store.cancel_reminder(int(data["id"]))
@@ -649,6 +793,7 @@ def create_panel(control, password, password_path=None):
                 data.get("audio_id"),
                 data.get("delivery", "call"),
                 data.get("collect_reply", False),
+                data.get("fallback_to_message", True),
             )
         elif action == "preview":
             result = await control.preview(
@@ -660,6 +805,15 @@ def create_panel(control, password, password_path=None):
             result = control.store.retry_recording(data["id"])
         elif action == "retry-reminder":
             result = control.store.retry_reminder(int(data["id"]))
+        elif action == "snooze-reminder":
+            request_id = data.get("request_id")
+            if not isinstance(request_id, str) or not 16 <= len(request_id) <= 100:
+                raise ValueError("So'rov identifikatori yo'q. Sahifani yangilang.")
+            result = control.store.snooze_reminder(
+                int(data["id"]), data.get("minutes", 15), request_id=request_id
+            )
+        elif action == "search":
+            result = {"results": control.store.search_local(data.get("query"))}
         elif action == "call-owner":
             agent = control.require_agent()
             if not agent.settings.enable_voice_calls:
@@ -744,6 +898,12 @@ def create_panel(control, password, password_path=None):
         "/voice-ui.js",
         "/library-ui.js",
         "/style.css",
+        "/inter-latin.woff2",
+        "/reference-colors.css",
+        "/design.css",
+        "/workspace-ui.js",
+        "/contact-picker.js",
+        "/theme.js",
         "/icon.svg",
         "/icon-192.png",
         "/icon-512.png",
@@ -752,6 +912,8 @@ def create_panel(control, password, password_path=None):
     ):
         app.router.add_get(route, static)
     app.router.add_get("/api/session", session_status)
+    app.router.add_get("/api/chat-export", chat_export)
+    app.router.add_get("/TelegramAgent.apk", mobile_apk)
     app.router.add_post("/api/login", login)
     app.router.add_post("/api/voice-upload", voice_upload)
     app.router.add_get("/api/voice-assets/{asset_id:[a-f0-9]{32}}", voice_audio)

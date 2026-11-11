@@ -1,9 +1,12 @@
 import hashlib
 import json
+import secrets
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
+
+REMINDER_DRAFT_KEY = "local_reminder_draft"
 
 
 def utc_now():
@@ -29,6 +32,9 @@ class Store:
         self.root = path.parent.parent if path.parent.name == "data" else path.parent
         self.db = sqlite3.connect(path)
         self.db.row_factory = sqlite3.Row
+        self.db.create_function(
+            "casefold", 1, lambda value: (value or "").casefold(), deterministic=True
+        )
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute(
             "CREATE TABLE IF NOT EXISTS reminder_failures (id INTEGER PRIMARY KEY,reminder_id INTEGER NOT NULL,due TEXT NOT NULL,error TEXT NOT NULL,created TEXT NOT NULL)"
@@ -62,10 +68,17 @@ class Store:
           CREATE TABLE IF NOT EXISTS call_attempts (
             id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, created TEXT NOT NULL
           );
+          CREATE INDEX IF NOT EXISTS call_attempts_created ON call_attempts(created);
         """)
         # Additive migrations keep existing reminders, contacts and call history intact.
         for table, additions in {
-            "reminders": {"recovery_message_only": "INTEGER NOT NULL DEFAULT 0"},
+            "reminders": {
+                "recovery_message_only": "INTEGER NOT NULL DEFAULT 0",
+                "claim_token": "TEXT",
+                "message_random_id": "INTEGER",
+                "message_confirmed": "INTEGER NOT NULL DEFAULT 0",
+                "snoozed_from": "INTEGER",
+            },
             "contacts": {
                 "telegram_id": "INTEGER",
                 "call_allowed": "INTEGER NOT NULL DEFAULT 0",
@@ -87,6 +100,11 @@ class Store:
                 "duration_seconds": "INTEGER NOT NULL DEFAULT 180",
                 "transcript": "TEXT NOT NULL DEFAULT '[]'",
                 "summary": "TEXT NOT NULL DEFAULT ''",
+                "fallback_to_message": "INTEGER NOT NULL DEFAULT 0",
+                "text_random_id": "INTEGER",
+                "text_message_id": "INTEGER",
+                "text_sent_at": "TEXT",
+                "text_body": "TEXT NOT NULL DEFAULT ''",
             },
         }.items():
             columns = {row[1] for row in self.db.execute(f"PRAGMA table_info({table})")}
@@ -113,6 +131,9 @@ class Store:
         )
         self.db.execute(
             "CREATE TABLE IF NOT EXISTS recordings (id TEXT PRIMARY KEY, peer_id INTEGER, label TEXT, job_id INTEGER, created TEXT, state TEXT, filename TEXT DEFAULT '',incoming_filename TEXT DEFAULT '', duration REAL DEFAULT 0, attempts INTEGER DEFAULT 0,retry_after TEXT,last_error TEXT DEFAULT '')"
+        )
+        self.db.execute(
+            "CREATE TABLE IF NOT EXISTS contact_text_replies (job_id INTEGER NOT NULL,message_id INTEGER NOT NULL,body TEXT NOT NULL,created TEXT NOT NULL,PRIMARY KEY(job_id,message_id))"
         )
         self.db.commit()
 
@@ -151,12 +172,49 @@ class Store:
                     ),
                 )
 
-    def add_reminder(self, title, due_at, repeat="none", mode="call"):
+        old_limits = self.db.execute(
+            """SELECT id,diagnostics,transcript FROM outbound_calls c
+               WHERE state='failed' AND result LIKE ? AND question_delivered=0
+               AND NOT EXISTS(SELECT 1 FROM recordings r WHERE r.job_id=c.id)""",
+            ("Mahalliy qo'ng'iroq chegarasiga yetildi.%",),
+        ).fetchall()
+        for row in old_limits:
+            try:
+                diagnostic = json.loads(row["diagnostics"])
+                transcript = json.loads(row["transcript"])
+                if (
+                    diagnostic.get("error_code") != "TelegramPaused"
+                    or diagnostic.get("connected")
+                    or diagnostic.get("telegram_accepted")
+                    or diagnostic.get("playback_frames")
+                    or diagnostic.get("input_frames")
+                    or any(turn.get("role") == "user" for turn in transcript)
+                ):
+                    continue
+            except (ValueError, TypeError, AttributeError):
+                continue
+            report = "Mahalliy qo'ng'iroq limiti sabab telefon terilmagan."
+            diagnostic["error_code"] = "CallRateLimited"
+            with self.db:
+                self.db.execute(
+                    "UPDATE outbound_calls SET state='rate_limited',result=?,summary=?,diagnostics=? WHERE id=?",
+                    (report, report, json.dumps(diagnostic, ensure_ascii=False), row["id"]),
+                )
+
+    def add_reminder(self, title, due_at, repeat="none", mode="call", *, draft=None):
         title = self._title(title)
         if repeat not in {"none", "daily", "weekly"} or mode not in {"call", "message"}:
             raise ValueError("Noto'g'ri repeat yoki mode.")
         due = parse_due(due_at, self.timezone)
         with self.db:
+            if (
+                draft is not None
+                and not self.db.execute(
+                    "DELETE FROM telegram_state WHERE key=? AND value=?",
+                    (REMINDER_DRAFT_KEY, draft),
+                ).rowcount
+            ):
+                raise ValueError("Qoralama o'zgardi. /eslatma bilan qayta boshlang.")
             cur = self.db.execute(
                 "INSERT INTO reminders(title,due,repeat,mode,created) VALUES(?,?,?,?,?)",
                 (title, due.isoformat(), repeat, mode, utc_now().isoformat()),
@@ -192,6 +250,145 @@ class Store:
             ).rowcount
         return {"cancelled": bool(n), "id": reminder_id}
 
+    def snooze_reminder(self, reminder_id, minutes=15, *, request_id=None, now=None):
+        if type(reminder_id) is not int or reminder_id < 1:
+            raise ValueError("Eslatmaning raqamli ID sini kiriting.")
+        if type(minutes) is not int or not 1 <= minutes <= 10080:
+            raise ValueError("Kechiktirish 1..10080 daqiqa orasida bo'lsin.")
+        if request_id is not None and (
+            not isinstance(request_id, str) or not 1 <= len(request_id) <= 100
+        ):
+            raise ValueError("So'rov identifikatori noto'g'ri.")
+        now = now or utc_now()
+        due = now + timedelta(minutes=minutes)
+        key = "snooze:" + request_id if request_id else None
+        arguments = {"reminder_id": reminder_id, "minutes": minutes}
+        with self.db:
+            self.db.execute("BEGIN IMMEDIATE")
+            cached = self.cached_tool(key) if key else None
+            if cached:
+                if cached["arguments"] != arguments:
+                    raise ValueError("Bu identifikator boshqa eslatish so'roviga tegishli.")
+                return cached["result"]
+            source = self.db.execute(
+                "SELECT * FROM reminders WHERE id=?", (reminder_id,)
+            ).fetchone()
+            if source is None or source["state"] == "cancelled":
+                raise ValueError("Faol yoki yetkazilgan eslatma topilmadi.")
+            if source["state"] == "delivering":
+                raise ValueError("Eslatma hozir yetkazilmoqda. Tugagach keyinga suring.")
+            target_id = reminder_id
+            if source["repeat"] != "none":
+                copy = self.db.execute(
+                    "SELECT id,state FROM reminders WHERE snoozed_from=? AND state IN ('pending','failed','delivering') ORDER BY id DESC LIMIT 1",
+                    (reminder_id,),
+                ).fetchone()
+                if copy and copy["state"] == "delivering":
+                    raise ValueError(
+                        "Qo'shimcha eslatma hozir yetkazilmoqda. Tugagach keyinga suring."
+                    )
+                if copy:
+                    target_id = copy["id"]
+                else:
+                    target_id = self.db.execute(
+                        "INSERT INTO reminders(title,due,repeat,mode,created,snoozed_from) VALUES(?,?,'none','message',?,?)",
+                        (source["title"], due.isoformat(), now.isoformat(), reminder_id),
+                    ).lastrowid
+                next_due = datetime.fromisoformat(source["due"]).astimezone(ZoneInfo(self.timezone))
+                step = timedelta(days=1 if source["repeat"] == "daily" else 7)
+                while next_due.astimezone(UTC) <= due:
+                    next_due += step
+                self.db.execute(
+                    """UPDATE reminders SET due=?,state='pending',attempts=0,retry_after=NULL,
+                       lease_until=NULL,claim_token=NULL,message_random_id=NULL,message_confirmed=0,
+                       recovery_message_only=0,last_error=NULL WHERE id=?""",
+                    (next_due.astimezone(UTC).isoformat(), reminder_id),
+                )
+            self.db.execute(
+                """UPDATE reminders SET due=?,mode='message',state='pending',attempts=0,retry_after=NULL,
+                   lease_until=NULL,claim_token=NULL,message_random_id=NULL,message_confirmed=0,
+                   recovery_message_only=0,last_error=NULL,delivery_status=NULL WHERE id=?""",
+                (due.isoformat(), target_id),
+            )
+            result = {
+                "saved": True,
+                "id": target_id,
+                "source_id": reminder_id,
+                "title": source["title"],
+                "due_at": due.astimezone(ZoneInfo(self.timezone)).isoformat(),
+                "mode": "message",
+            }
+            if key:
+                self.db.execute(
+                    "INSERT INTO tool_results VALUES(?,?)",
+                    (key, json.dumps({"arguments": arguments, "result": result})),
+                )
+        return result
+
+    def daily_overview(self, now=None):
+        local = (now or utc_now()).astimezone(ZoneInfo(self.timezone))
+        start = local.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC).isoformat()
+        end = (
+            (local.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1))
+            .astimezone(UTC)
+            .isoformat()
+        )
+        now_utc = local.astimezone(UTC).isoformat()
+        reminder_counts = self.db.execute(
+            """SELECT COUNT(*) total,COALESCE(SUM(due<?),0) overdue,COALESCE(SUM(state='failed'),0) failed
+               FROM reminders WHERE state IN ('pending','delivering','failed') AND due<?""",
+            (now_utc, end),
+        ).fetchone()
+        reminders = [
+            dict(row)
+            for row in self.db.execute(
+                """SELECT id,title,due,state,mode FROM reminders
+               WHERE state IN ('pending','delivering','failed') AND due<? ORDER BY due,id LIMIT 10""",
+                (end,),
+            )
+        ]
+        for row in reminders:
+            row["due_local"] = (
+                datetime.fromisoformat(row["due"]).astimezone(ZoneInfo(self.timezone)).isoformat()
+            )
+        tasks = [
+            dict(row)
+            for row in self.db.execute(
+                """SELECT id,target,state,result,COALESCE(due,created) due FROM outbound_calls
+               WHERE (state IN ('queued','running') AND COALESCE(due,created)<?)
+               OR (created>=? AND created<? AND state IN ('failed','text_failed','interrupted','rate_limited','text_replied'))
+               ORDER BY created DESC,id DESC LIMIT 10""",
+                (end, start, end),
+            )
+        ]
+        return {
+            "date": local.date().isoformat(),
+            "timezone": self.timezone,
+            "open_plans": self.db.execute(
+                "SELECT COUNT(*) FROM plans WHERE status='open'"
+            ).fetchone()[0],
+            "reminder_counts": dict(reminder_counts),
+            "plans": self.list_plans()[:5],
+            "reminders": reminders,
+            "tasks": tasks,
+        }
+
+    def search_local(self, query):
+        if not isinstance(query, str) or not query.strip() or len(query) > 200:
+            raise ValueError("Qidirish matni 1..200 belgidan iborat bo'lsin.")
+        needle = query.strip().casefold()
+        rows = self.db.execute(
+            """WITH records AS (
+               SELECT 'plan' kind,id,title,details snippet,status state,created at FROM plans
+               UNION ALL SELECT 'reminder',id,title,due,state,created FROM reminders
+               UNION ALL SELECT 'contact',id,name,reference,'saved','' FROM contacts
+               UNION ALL SELECT 'task',id,target,message||' '||COALESCE(summary,''),state,created FROM outbound_calls)
+               SELECT kind,id,title,substr(snippet,1,400) snippet,state,at FROM records
+               WHERE instr(casefold(COALESCE(title,'')||' '||COALESCE(snippet,'')),?)>0 ORDER BY at DESC,id DESC LIMIT 30""",
+            (needle,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
     def retry_reminder(self, reminder_id):
         with self.db:
             changed = self.db.execute(
@@ -216,25 +413,39 @@ class Store:
         self.recover_reminders(now)
         with self.db:
             row = self.db.execute(
-                "SELECT * FROM reminders WHERE state='pending' AND due<=? "
-                "AND (retry_after IS NULL OR retry_after<=?) ORDER BY due LIMIT 1",
-                (now.isoformat(), now.isoformat()),
+                """UPDATE reminders SET state='delivering',attempts=attempts+1,lease_until=?,
+                   claim_token=?,message_random_id=COALESCE(message_random_id,?)
+                   WHERE id=(SELECT id FROM reminders WHERE state='pending' AND due<=?
+                   AND (retry_after IS NULL OR retry_after<=?) ORDER BY due,id LIMIT 1)
+                   RETURNING *""",
+                (
+                    (now + timedelta(minutes=65)).isoformat(),
+                    secrets.token_hex(16),
+                    secrets.randbits(63) or 1,
+                    now.isoformat(),
+                    now.isoformat(),
+                ),
             ).fetchone()
             if row is None:
                 return None
-            self.db.execute(
-                "UPDATE reminders SET state='delivering',attempts=attempts+1,lease_until=? WHERE id=?",
-                ((now + timedelta(minutes=65)).isoformat(), row["id"]),
+        return dict(row) | {"attempts": row["attempts"] - 1}
+
+    def confirm_reminder_message(self, row):
+        with self.db:
+            return bool(
+                self.db.execute(
+                    "UPDATE reminders SET message_confirmed=1 WHERE id=? AND state='delivering' AND claim_token=?",
+                    (row["id"], row["claim_token"]),
+                ).rowcount
             )
-        return dict(row)
 
     def finish(self, row, error=None, now=None, delivery_status=None):
         now = now or utc_now()
         with self.db:
-            current = self.db.execute(
-                "SELECT state FROM reminders WHERE id=?", (row["id"],)
-            ).fetchone()
-            if current is None or current["state"] != "delivering":
+            if not self.db.execute(
+                "UPDATE reminders SET claim_token=NULL WHERE id=? AND state='delivering' AND claim_token=?",
+                (row["id"], row["claim_token"]),
+            ).rowcount:
                 return
             if error:
                 attempts = row["attempts"] + 1
@@ -249,15 +460,15 @@ class Store:
                     while due.astimezone(UTC) <= now:
                         due += step
                     self.db.execute(
-                        "UPDATE reminders SET state='pending',due=?,attempts=0,lease_until=NULL,retry_after=NULL,recovery_message_only=0,last_error=?,delivery_status='previous_occurrence_failed' WHERE id=?",
+                        "UPDATE reminders SET state='pending',due=?,attempts=0,lease_until=NULL,retry_after=NULL,recovery_message_only=0,message_random_id=NULL,message_confirmed=0,last_error=?,delivery_status='previous_occurrence_failed' WHERE id=?",
                         (due.astimezone(UTC).isoformat(), error[:120], row["id"]),
                     )
                     return
                 state = "failed" if attempts >= 3 else "pending"
                 retry_at = now + timedelta(minutes=2 * attempts)
                 self.db.execute(
-                    "UPDATE reminders SET state=?,retry_after=?,last_error=?,lease_until=NULL,recovery_message_only=CASE WHEN ?='interrupted' THEN 1 ELSE recovery_message_only END WHERE id=?",
-                    (state, retry_at.isoformat(), error[:120], error, row["id"]),
+                    "UPDATE reminders SET state=?,retry_after=?,last_error=?,lease_until=NULL,recovery_message_only=1 WHERE id=?",
+                    (state, retry_at.isoformat(), error[:120], row["id"]),
                 )
             elif row["repeat"] == "none":
                 self.db.execute(
@@ -271,7 +482,7 @@ class Store:
                     due += step
                 self.db.execute(
                     "UPDATE reminders SET state='pending',due=?,attempts=0,lease_until=NULL,"
-                    "last_error=NULL,retry_after=NULL,recovery_message_only=0,delivery_status=? WHERE id=?",
+                    "last_error=NULL,retry_after=NULL,recovery_message_only=0,message_random_id=NULL,message_confirmed=0,delivery_status=? WHERE id=?",
                     (due.astimezone(UTC).isoformat(), delivery_status, row["id"]),
                 )
 
@@ -290,6 +501,40 @@ class Store:
                 "SELECT * FROM plans WHERE status='open' ORDER BY id DESC LIMIT 100"
             )
         ]
+
+    def workspace_overview(self):
+        return {
+            "recording_counts": dict(
+                self.db.execute("SELECT state,COUNT(*) FROM recordings GROUP BY state")
+            ),
+            "recording_seconds": self.db.execute(
+                "SELECT COALESCE(SUM(duration),0) FROM recordings"
+            ).fetchone()[0],
+            "plan_counts": dict(
+                self.db.execute("SELECT status,COUNT(*) FROM plans GROUP BY status")
+            ),
+            "completed_plans": [
+                dict(row)
+                for row in self.db.execute(
+                    "SELECT * FROM plans WHERE status='done' ORDER BY id DESC LIMIT 100"
+                )
+            ],
+            "reminder_counts": dict(
+                self.db.execute("SELECT state,COUNT(*) FROM reminders GROUP BY state")
+            ),
+            "reminder_history": [
+                dict(row)
+                for row in self.db.execute(
+                    "SELECT * FROM reminders WHERE state IN ('delivered','cancelled') ORDER BY due DESC LIMIT 100"
+                )
+            ],
+            "contact_activity": {
+                str(row["recipient_user_id"]): {"count": row["count"], "last": row["last"]}
+                for row in self.db.execute(
+                    "SELECT recipient_user_id,COUNT(*) count,MAX(created) last FROM outbound_calls WHERE recipient_user_id IS NOT NULL GROUP BY recipient_user_id"
+                )
+            },
+        }
 
     def complete_plan(self, plan_id):
         with self.db:
@@ -315,7 +560,7 @@ class Store:
             raise ValueError("Noto'g'ri repeat yoki mode.")
         with self.db:
             count = self.db.execute(
-                "UPDATE reminders SET state='pending',recovery_message_only=0,title=?,due=?,repeat=?,mode=?,attempts=0,retry_after=NULL,last_error=NULL WHERE id=? AND state IN ('pending','failed')",
+                "UPDATE reminders SET state='pending',recovery_message_only=0,title=?,due=?,repeat=?,mode=?,attempts=0,retry_after=NULL,last_error=NULL,message_random_id=NULL,message_confirmed=0 WHERE id=? AND state IN ('pending','failed')",
                 (title, due.isoformat(), repeat, mode, reminder_id),
             ).rowcount
         if not count:
@@ -387,24 +632,61 @@ class Store:
         with self.db:
             self.db.execute("INSERT OR REPLACE INTO telegram_state VALUES(?,?)", (key, value))
 
-    def reserve_call(self, user_id, cooldown_seconds=60, max_per_hour=3, now=None):
+    def next_call_at(self, cooldown_seconds, max_per_hour, now=None):
+        now = now or utc_now()
+        attempts = self.db.execute(
+            "SELECT created FROM call_attempts ORDER BY created DESC LIMIT ?", (max_per_hour,)
+        ).fetchall()
+        if not attempts:
+            return None
+        earliest = datetime.fromisoformat(attempts[0][0]) + timedelta(seconds=cooldown_seconds)
+        if len(attempts) == max_per_hour:
+            earliest = max(earliest, datetime.fromisoformat(attempts[-1][0]) + timedelta(hours=1))
+        return earliest if earliest > now else None
+
+    def call_limit_message(self, retry_at):
+        local = retry_at.astimezone(ZoneInfo(self.timezone))
+        if local.microsecond:
+            local += timedelta(seconds=1)
+        return f"Mahalliy qo'ng'iroq limiti band. Telefon terilmadi. {local:%Y-%m-%d %H:%M:%S} ({self.timezone}) dan keyin yangi topshiriq bering."
+
+    def call_budget(self, cooldown_seconds, max_per_hour, now=None):
+        now = now or utc_now()
+        used = self.db.execute(
+            "SELECT COUNT(*) FROM call_attempts WHERE created>?",
+            ((now - timedelta(hours=1)).isoformat(),),
+        ).fetchone()[0]
+        retry_at = self.next_call_at(cooldown_seconds, max_per_hour, now)
+        text = (
+            f"Oxirgi 60 daqiqada {used}/{max_per_hour} qo'ng'iroq urinishi. "
+            f"Urinishlar oralig'i kamida {cooldown_seconds} soniya."
+        )
+        if retry_at:
+            text += " " + self.call_limit_message(retry_at)
+        else:
+            text += " Hozir mahalliy limit bo'yicha qo'ng'iroq mumkin."
+        return {
+            "used": used,
+            "remaining": max(0, max_per_hour - used),
+            "max_per_hour": max_per_hour,
+            "cooldown_seconds": cooldown_seconds,
+            "retry_at": retry_at.isoformat() if retry_at else None,
+            "text": text,
+        }
+
+    def reserve_call_slot(self, user_id, cooldown_seconds, max_per_hour, now=None):
         now = now or utc_now()
         with self.db:
-            row = self.db.execute(
-                "SELECT created FROM call_attempts ORDER BY id DESC LIMIT 1"
-            ).fetchone()
-            if row and now - datetime.fromisoformat(row[0]) < timedelta(seconds=cooldown_seconds):
-                return False
-            count = self.db.execute(
-                "SELECT COUNT(*) FROM call_attempts WHERE created>?",
-                ((now - timedelta(hours=1)).isoformat(),),
-            ).fetchone()[0]
-            if count >= max_per_hour:
-                return False
+            self.db.execute("BEGIN IMMEDIATE")
+            if retry_at := self.next_call_at(cooldown_seconds, max_per_hour, now):
+                return retry_at
             self.db.execute(
                 "INSERT INTO call_attempts(user_id,created) VALUES(?,?)", (user_id, now.isoformat())
             )
-        return True
+        return None
+
+    def reserve_call(self, user_id, cooldown_seconds=60, max_per_hour=3, now=None):
+        return self.reserve_call_slot(user_id, cooldown_seconds, max_per_hour, now) is None
 
     def save_contact(self, name, reference):
         name = self._title(name)
@@ -424,12 +706,9 @@ class Store:
     def search_contacts(self, query):
         if not isinstance(query, str) or not query.strip():
             raise ValueError("Qidirish uchun ism yoki username kiriting.")
-        query = query.casefold().strip()
-        return [
-            row
-            for row in self.list_contacts()
-            if query in (row["name"] + " " + row["reference"]).casefold()
-        ][:30]
+        from .contact_names import contact_matches
+
+        return [row for row in self.list_contacts() if contact_matches(row, query)][:30]
 
     def import_contacts(self, contacts, source="telegram"):
         added = skipped = 0
@@ -512,14 +791,30 @@ class Store:
         audio_id=None,
         delivery="call",
         collect_reply=False,
+        *,
+        call_limits=None,
+        fallback_to_message=False,
     ):
-        if mode not in {"relay", "ask", "conversation", "record", "voice"} or language not in {
+        if mode not in {
+            "relay",
+            "ask",
+            "conversation",
+            "record",
+            "voice",
+            "text",
+        } or language not in {
             "uz",
             "en",
             "ru",
         }:
             raise ValueError("Qo'ng'iroq turi yoki tili noto'g'ri.")
-        if delivery not in {"call", "message"} or (delivery == "message" and mode != "voice"):
+        if type(fallback_to_message) is not bool:
+            raise ValueError("Xabar zaxirasi true yoki false bo'lsin.")
+        if mode == "text":
+            delivery = "message"
+        if delivery not in {"call", "message"} or (
+            delivery == "message" and mode not in {"voice", "text"}
+        ):
             raise ValueError("Yetkazish turi noto'g'ri.")
         if type(collect_reply) is not bool or (
             collect_reply and (mode != "voice" or delivery != "call")
@@ -547,7 +842,7 @@ class Store:
         due = parse_due(due_at, self.timezone).isoformat() if due_at else None
         existing = self.db.execute(
             "SELECT id,state FROM outbound_calls WHERE target=? AND message=? "
-            "AND state IN ('queued','running') AND due IS ? AND mode=? AND language=? AND audio_id IS ? AND delivery=? AND collect_reply=? ORDER BY id LIMIT 1",
+            "AND state IN ('queued','running') AND due IS ? AND mode=? AND language=? AND audio_id IS ? AND delivery=? AND collect_reply=? AND fallback_to_message=? ORDER BY id LIMIT 1",
             (
                 target.strip(),
                 message.strip(),
@@ -557,6 +852,7 @@ class Store:
                 audio_id,
                 delivery,
                 int(collect_reply),
+                int(fallback_to_message),
             ),
         ).fetchone()
         if existing:
@@ -568,8 +864,18 @@ class Store:
                 "status": existing["state"],
                 "duplicate_suppressed": True,
                 "mode": mode,
+                "delivery": delivery,
+                "fallback_to_message": fallback_to_message,
                 "note": "Bu topshiriq allaqachon navbatda yoki bajarilmoqda; takrorlanmadi.",
             }
+        if (
+            delivery == "call"
+            and not fallback_to_message
+            and due is None
+            and call_limits is not None
+        ):
+            if retry_at := self.next_call_at(*call_limits):
+                raise ValueError(self.call_limit_message(retry_at))
         if (
             self.db.execute("SELECT COUNT(*) FROM outbound_calls WHERE state='queued'").fetchone()[
                 0
@@ -579,7 +885,7 @@ class Store:
             raise ValueError("Navbatda 10 ta topshiriq bor. Avval ularning yakunlanishini kuting.")
         with self.db:
             cursor = self.db.execute(
-                "INSERT INTO outbound_calls(target,message,created,due,recipient_user_id,mode,language,max_turns,duration_seconds,audio_id,delivery,collect_reply) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO outbound_calls(target,message,created,due,recipient_user_id,mode,language,max_turns,duration_seconds,audio_id,delivery,collect_reply,fallback_to_message) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     target.strip(),
                     message.strip(),
@@ -593,6 +899,7 @@ class Store:
                     audio_id,
                     delivery,
                     int(collect_reply),
+                    int(fallback_to_message),
                 ),
             )
         return {
@@ -606,6 +913,7 @@ class Store:
             "mode": mode,
             "language": language,
             "delivery": delivery,
+            "fallback_to_message": fallback_to_message,
             "audio_id": audio_id,
             "collect_reply": collect_reply,
             "note": "Siz bilan faol qo'ng'iroq tugagach bajariladi. Hali yetkazilmadi.",
@@ -644,19 +952,93 @@ class Store:
             self.db.execute("UPDATE voice_assets SET archived=1 WHERE id=?", (asset_id,))
         return {"archived": True}
 
-    def queue_notification(self, owner_id, body):
+    def _queue_notification(self, owner_id, body, delay_seconds=120):
         digest = hashlib.sha256((str(owner_id) + "|" + body).encode()).hexdigest()
+        return self.db.execute(
+            "INSERT OR IGNORE INTO owner_outbox(id,owner_id,body,created,retry_after) VALUES(?,?,?,?,?)",
+            (
+                digest,
+                owner_id,
+                body[:12000],
+                utc_now().isoformat(),
+                (utc_now() + timedelta(seconds=delay_seconds)).isoformat(),
+            ),
+        ).rowcount
+
+    def queue_notification(self, owner_id, body):
         with self.db:
-            self.db.execute(
-                "INSERT OR IGNORE INTO owner_outbox(id,owner_id,body,created,retry_after) VALUES(?,?,?,?,?)",
+            self._queue_notification(owner_id, body)
+
+    def begin_contact_text(self, job_id, recipient_id, body):
+        with self.db:
+            row = self.db.execute(
+                """UPDATE outbound_calls SET recipient_user_id=?,text_body=?,text_random_id=?
+                   WHERE id=? AND state='running' AND text_random_id IS NULL RETURNING text_random_id""",
+                (recipient_id, body, secrets.randbits(63) or 1, job_id),
+            ).fetchone()
+            if row is None:
+                raise ValueError(
+                    "Ushbu xabar yuborish bosqichi allaqachon boshlangan yoki bekor qilingan."
+                )
+        return row[0]
+
+    def finish_contact_text(self, job_id, owner_id, state, report, message_id=None):
+        if state not in {"text_sent", "text_failed", "interrupted"}:
+            raise ValueError("Noto'g'ri matnli xabar holati.")
+        with self.db:
+            changed = self.db.execute(
+                """UPDATE outbound_calls SET state=?,result=?,summary=?,text_message_id=?,text_sent_at=?
+                   WHERE id=? AND state='running'""",
                 (
-                    digest,
-                    owner_id,
-                    body[:12000],
-                    utc_now().isoformat(),
-                    (utc_now() + timedelta(minutes=2)).isoformat(),
+                    state,
+                    report[:200],
+                    report[:6000],
+                    message_id,
+                    utc_now().isoformat() if state == "text_sent" else None,
+                    job_id,
                 ),
+            ).rowcount
+            if changed:
+                self._queue_notification(owner_id, report, delay_seconds=0)
+                self.db.execute(
+                    "INSERT INTO messages(role,content,created,private) VALUES('assistant',?,?,1)",
+                    (report, utc_now().isoformat()),
+                )
+
+    def capture_contact_text_reply(self, sender_id, reply_to_id, message_id, text, owner_id):
+        with self.db:
+            row = self.db.execute(
+                """SELECT id,target FROM outbound_calls WHERE recipient_user_id=? AND text_message_id=?
+                   AND state IN ('text_sent','text_replied') AND text_sent_at>=? ORDER BY id DESC LIMIT 1""",
+                (sender_id, reply_to_id, (utc_now() - timedelta(hours=24)).isoformat()),
+            ).fetchone()
+            if row is None:
+                return False
+            count = self.db.execute(
+                "SELECT COUNT(*) FROM contact_text_replies WHERE job_id=?", (row["id"],)
+            ).fetchone()[0]
+            if count >= 10:
+                return False
+            body = text[:3000] + (
+                "\n[Javobning davomi Telegram chatida.]" if len(text) > 3000 else ""
             )
+            inserted = self.db.execute(
+                "INSERT OR IGNORE INTO contact_text_replies VALUES(?,?,?,?)",
+                (row["id"], message_id, body, utc_now().isoformat()),
+            ).rowcount
+            if not inserted:
+                return False
+            report = f"Vazifa #{row['id']}: {row['target']} dan yozma javob:\n{body}"
+            self.db.execute(
+                "UPDATE outbound_calls SET state='text_replied',result='Kontaktning yozma javobi keldi.',summary=? WHERE id=?",
+                (report, row["id"]),
+            )
+            self._queue_notification(owner_id, report, delay_seconds=0)
+            self.db.execute(
+                "INSERT INTO messages(role,content,created,private) VALUES('assistant',?,?,1)",
+                (report, utc_now().isoformat()),
+            )
+        return True
 
     def pending_notification(self, owner_id):
         row = self.db.execute(
@@ -694,7 +1076,14 @@ class Store:
             ).rowcount
         return {"queued": count}
 
-    def list_contact_calls(self):
+    def list_contact_calls(self, *, include_active=False):
+        if include_active:
+            return [
+                dict(row)
+                for row in self.db.execute(
+                    "SELECT * FROM outbound_calls WHERE state IN ('queued','running') OR id IN (SELECT id FROM outbound_calls ORDER BY id DESC LIMIT 20) ORDER BY id DESC"
+                )
+            ]
         return [
             dict(row)
             for row in self.db.execute("SELECT * FROM outbound_calls ORDER BY id DESC LIMIT 20")
@@ -723,13 +1112,11 @@ class Store:
                 ),
             )
             row = self.db.execute(
-                "SELECT * FROM outbound_calls WHERE state='queued' AND (due IS NULL OR due<=?) ORDER BY COALESCE(due,created),id LIMIT 1",
+                """UPDATE outbound_calls SET state='running' WHERE id=(
+                   SELECT id FROM outbound_calls WHERE state='queued' AND (due IS NULL OR due<=?)
+                   ORDER BY COALESCE(due,created),id LIMIT 1) RETURNING *""",
                 (now.isoformat(),),
             ).fetchone()
-            if row:
-                self.db.execute(
-                    "UPDATE outbound_calls SET state='running' WHERE id=?", (row["id"],)
-                )
         return dict(row) if row else None
 
     def finish_contact_call(self, job_id, state, result):
@@ -749,6 +1136,10 @@ class Store:
             "rejected",
             "privacy_blocked",
             "connection_failed",
+            "rate_limited",
+            "text_sent",
+            "text_failed",
+            "text_replied",
         }:
             raise ValueError("Noto'g'ri qo'ng'iroq holati")
         with self.db:
@@ -786,7 +1177,7 @@ class Store:
         # Do not repeat a call that might already have reached a third party.
         with self.db:
             self.db.execute(
-                "UPDATE outbound_calls SET state='interrupted',result='Agent qayta ishga tushdi; qayta terilmadi.' WHERE state='running'"
+                "UPDATE outbound_calls SET state='interrupted',result=CASE WHEN text_random_id IS NOT NULL THEN 'Xabar yuborish uzilgan; yetkazilgani tasdiqlanmagan.' ELSE 'Agent qayta ishga tushdi; qayta terilmadi.' END WHERE state='running'"
             )
             self.db.execute(
                 "UPDATE outbound_calls SET state='cancelled',result='Topshiriq 10 daqiqadan ortiq eskirgan.' WHERE state='queued' AND COALESCE(due,created)<?",
@@ -833,7 +1224,7 @@ class Store:
         return [
             dict(r)
             for r in self.db.execute(
-                "SELECT r.*,c.state AS task_state,c.answer_verified,c.message AS question FROM recordings r LEFT JOIN outbound_calls c ON c.id=r.job_id ORDER BY r.created DESC LIMIT 30"
+                "SELECT r.*,c.state AS task_state,c.answer_verified,c.message AS question,c.summary,c.transcript FROM recordings r LEFT JOIN outbound_calls c ON c.id=r.job_id ORDER BY r.created DESC LIMIT 30"
             )
         ]
 

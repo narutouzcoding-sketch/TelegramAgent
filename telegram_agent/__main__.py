@@ -248,7 +248,7 @@ def main():
     )
     parser.add_argument(
         "--host",
-        default="127.0.0.1",
+        default=None,
         choices=["127.0.0.1", "0.0.0.0"],
         help="panel: localhost yoki LAN",
     )
@@ -263,7 +263,8 @@ def main():
             from .panel import serve_panel
 
             with process_lock():
-                asyncio.run(serve_panel(Settings.load(), args.host, args.port))
+                settings = Settings.load()
+                asyncio.run(serve_panel(settings, args.host or settings.panel_host, args.port))
         elif args.command == "free-voice-check":
             from .voice_check import check_free_voice
 

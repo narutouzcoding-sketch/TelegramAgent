@@ -12,6 +12,10 @@ class TelegramPaused(ValueError):
     """A local pause or server restriction, with no automatic retry."""
 
 
+class CallRateLimited(TelegramPaused):
+    """The local budget blocked this request before Telegram dialing."""
+
+
 class TelegramPolicy:
     def __init__(self, settings, store):
         self.settings, self.store = settings, store
@@ -83,10 +87,8 @@ class TelegramPolicy:
             or user_id not in self.settings.allowed_call_user_ids
         ):
             raise TelegramPaused("Bu kontaktga qo'ng'iroq ruxsat etilmagan; telefon terilmadi.")
-        if not self.store.reserve_call(
+        if retry_at := self.store.reserve_call_slot(
             user_id, self.settings.call_cooldown_seconds, self.settings.max_calls_per_hour
         ):
-            raise TelegramPaused(
-                "Mahalliy qo'ng'iroq chegarasiga yetildi. Hozir qayta terilmadi; keyinroq urinib ko'ring."
-            )
+            raise CallRateLimited(self.store.call_limit_message(retry_at))
         return await self.action(operation)

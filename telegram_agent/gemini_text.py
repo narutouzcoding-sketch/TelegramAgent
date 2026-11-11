@@ -1,27 +1,44 @@
-"""Gemini text/tool and native audio adapter using Google's documented OpenAI-compatible endpoint."""
+"""Chat Completions adapter for Gemini, Groq and OpenAI, with native Gemini audio."""
 
 import asyncio
 import base64
+import math
 import time
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 
 from openai import APIError, AsyncOpenAI
 
-from .ai_access import AIUnavailable
+from .ai_access import QUOTA_CODES, AIProviderUnavailable, AIUnavailable
 
 
 class GeminiText:
-    def __init__(self, settings, store=None):
+    def __init__(self, settings, store=None, *, provider="gemini"):
         self.settings = settings
+        self.provider = provider
+        model_field, key_field, url = {
+            "gemini": (
+                "gemini_model",
+                "gemini_key",
+                "https://generativelanguage.googleapis.com/v1beta/openai/",
+            ),
+            "groq": ("groq_model", "groq_key", "https://api.groq.com/openai/v1/"),
+            "openai": ("text_model", "openai_key", "https://api.openai.com/v1/"),
+        }[provider]
+        self.model = getattr(settings, model_field)
         self.client = AsyncOpenAI(
-            api_key=settings.gemini_key,
-            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-            timeout=60,
+            api_key=getattr(settings, key_field),
+            base_url=url,
+            timeout=60 if provider == "gemini" else 20,
             max_retries=0,
         )
         from .local_text import LocalText
 
-        self.local = LocalText(settings) if settings.local_fallback_enabled else None
+        self.local = (
+            LocalText(settings)
+            if provider == "gemini" and settings.local_fallback_enabled
+            else None
+        )
         self.cooldown_until = 0
         self.ledger = None
         self.store = store
@@ -29,11 +46,6 @@ class GeminiText:
             from .usage import UsageLedger
 
             self.ledger = UsageLedger(store, settings)
-            value = store.telegram_state("gemini_cooldown_until")
-            if value:
-                self.cooldown_until = time.monotonic() + max(
-                    0, (datetime.fromisoformat(value) - datetime.now(timezone.utc)).total_seconds()
-                )
         self.stats = {
             "requests": 0,
             "input_tokens": 0,
@@ -41,9 +53,18 @@ class GeminiText:
             "truncated": 0,
             "rate_limited": 0,
             "local_requests": 0,
-            "last_provider": "gemini",
+            "last_provider": provider,
             "last_error": "",
         }
+
+    def cooldown_remaining(self):
+        remaining = self.cooldown_until - time.monotonic()
+        if self.store is not None:
+            value = self.store.telegram_state(f"{self.provider}_cooldown_until")
+            if value:
+                shared = datetime.fromisoformat(value) - datetime.now(timezone.utc)
+                remaining = max(remaining, shared.total_seconds())
+        return max(0, remaining)
 
     async def local_create(self, instructions, messages, tools, budget, purpose):
         self.stats["local_requests"] += 1
@@ -55,6 +76,10 @@ class GeminiText:
         )
         try:
             response = await self.local.create(instructions, messages, tools, budget)
+        except AIUnavailable as exc:
+            if key:
+                self.ledger.finish(key, state="failed")
+            raise AIProviderUnavailable(str(exc)) from None
         except BaseException:
             if key:
                 self.ledger.finish(key, state="failed")
@@ -73,11 +98,13 @@ class GeminiText:
         purpose="text",
     ):
         budget = max_output_tokens or self.settings.text_max_output_tokens
-        if time.monotonic() < self.cooldown_until:
+        remaining = self.cooldown_remaining()
+        if remaining:
             if self.local is not None and allow_local:
                 return await self.local_create(instructions, messages, tools, budget, purpose)
-            raise AIUnavailable(
-                "Gemini kutish davrida. Mahalliy ovoz tanish va asl yozuv ishlatiladi."
+            raise AIProviderUnavailable(
+                f"{self.provider.title()} kutish vaqti: {max(1, math.ceil(remaining))} soniya. "
+                "Reja va eslatmalar ro'yxatini Gemini'siz ochishingiz mumkin."
             )
         declarations = []
         for tool in tools:
@@ -103,26 +130,36 @@ class GeminiText:
 
                 try:
                     key = self.ledger.reserve(
-                        "gemini",
-                        self.settings.gemini_model,
+                        self.provider,
+                        self.model,
                         purpose,
                         estimate_input(instructions, messages, tools) + budget,
                     )
-                except AIUnavailable:
+                except AIUnavailable as exc:
                     if allow_local and self.local is not None:
                         return await self.local_create(
                             instructions, messages, tools, budget, purpose
                         )
-                    raise
+                    raise AIProviderUnavailable(str(exc)) from None
             self.stats["requests"] += 1
+            if self.provider == "gemini":
+                options = {
+                    "max_tokens": budget,
+                    "reasoning_effort": self.settings.gemini_reasoning_effort,
+                }
+            else:
+                options = {"max_completion_tokens": budget}
+                if self.provider == "groq" and self.model.startswith("openai/gpt-oss-"):
+                    options["reasoning_effort"] = "low"
+                elif self.provider == "openai":
+                    options["store"] = False
             response = await self.client.chat.completions.create(
-                model=self.settings.gemini_model,
+                model=self.model,
                 messages=[{"role": "system", "content": instructions}, *messages],
                 **({"tools": declarations, "tool_choice": "auto"} if declarations else {}),
-                max_tokens=budget,
-                reasoning_effort=self.settings.gemini_reasoning_effort,
+                **options,
             )
-            self.stats["last_provider"] = "gemini"
+            self.stats["last_provider"] = self.provider
             self.stats["last_error"] = ""
             if response.usage:
                 self.stats["input_tokens"] += response.usage.prompt_tokens
@@ -140,30 +177,39 @@ class GeminiText:
             if key:
                 self.ledger.finish(key, state="failed")
             status = getattr(error, "status_code", None)
+            provider = self.provider.title()
+            delay = 0
             if status == 429:
                 self.stats["rate_limited"] += 1
                 headers = getattr(getattr(error, "response", None), "headers", {}) or {}
-                try:
-                    delay = max(60, float(headers.get("retry-after", 300)))
-                except (ValueError, TypeError):
-                    delay = 300
+                delay = self.retry_delay(headers.get("retry-after"))
+                if getattr(error, "code", None) in QUOTA_CODES:
+                    delay = max(delay, 3600)
+                explanation = f"{provider} API kvotasi yoki so'rov tezligi limiti to'ldi."
+            elif status in {401, 403, 404}:
+                delay = 300
+                explanation = f"{provider} kaliti, model nomi yoki loyiha ruxsatini tekshiring."
+            elif status == 400:
+                explanation = f"{provider} so'rov sozlamasini qabul qilmadi."
+            else:
+                if status is None or status == 408 or status >= 500:
+                    delay = 30
+                explanation = f"{provider} xizmatida vaqtinchalik ulanish xatosi yuz berdi."
+            if delay:
+                delay = max(delay, self.cooldown_remaining())
                 self.cooldown_until = time.monotonic() + delay
                 if self.store:
-                    self.store.set_telegram_state(
-                        "gemini_cooldown_until",
-                        (datetime.now(timezone.utc) + timedelta(seconds=delay)).isoformat(),
+                    now = datetime.now(timezone.utc)
+                    latest = datetime.max.replace(tzinfo=timezone.utc)
+                    until = (
+                        latest
+                        if delay >= (latest - now).total_seconds()
+                        else now + timedelta(seconds=delay)
                     )
-                explanation = "Gemini API kvotasi yoki so'rov tezligi limiti to'ldi. Google AI Studio dagi kvota/billingni tekshiring; kalit/profil almashtirilmadi."
-            elif status in {401, 403}:
-                explanation = "Gemini API kaliti yoki ruxsati qabul qilinmadi. GEMINI_API_KEY va loyiha ruxsatlarini tekshiring."
-            elif status == 404:
-                explanation = "Gemini modeli akkauntingizda mavjud emas. GEMINI_MODEL va Google AI Studio ruxsatlarini tekshiring."
-            elif status == 400:
-                explanation = "Gemini so'rov sozlamasini qabul qilmadi. Model va reasoning sozlamasini tekshiring."
-            else:
-                explanation = (
-                    "Gemini xizmatida vaqtinchalik ulanish xatosi yuz berdi. Qayta urinib ko'ring."
-                )
+                    self.store.set_telegram_state(
+                        f"{self.provider}_cooldown_until",
+                        until.isoformat(),
+                    )
             self.stats["last_error"] = explanation
             if (
                 allow_local
@@ -171,7 +217,23 @@ class GeminiText:
                 and (status == 429 or status is None or status >= 500)
             ):
                 return await self.local_create(instructions, messages, tools, budget, purpose)
-            raise AIUnavailable(explanation) from None
+            kind = AIProviderUnavailable if delay else AIUnavailable
+            raise kind(explanation) from None
+
+    @staticmethod
+    def retry_delay(value):
+        if not value:
+            return 300
+        try:
+            try:
+                seconds = float(value)
+            except ValueError:
+                seconds = (
+                    parsedate_to_datetime(value) - datetime.now(timezone.utc)
+                ).total_seconds()
+            return max(60, seconds) if math.isfinite(seconds) else 300
+        except (TypeError, ValueError, OverflowError):
+            return 300
 
     async def transcribe_audio(self, wav, language="uz"):
         response = await self.create(
@@ -206,10 +268,10 @@ class GeminiText:
     def status(self):
         return {
             **self.stats,
-            "model": self.settings.gemini_model,
+            "model": self.model,
             "local_model": self.settings.local_model,
             "local_available": bool(self.local and self.local.available),
-            "cooldown_seconds": max(0, int(self.cooldown_until - time.monotonic())),
+            "cooldown_seconds": math.ceil(self.cooldown_remaining()),
             "daily": self.ledger.summary() if self.ledger else None,
         }
 

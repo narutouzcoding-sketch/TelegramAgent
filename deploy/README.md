@@ -18,4 +18,6 @@ Gemini matn modeli va mahalliy Whisper `small` uchun dastlab 2 vCPU/4 GB RAM tav
 6. Panel faqat loopbackda: o'z kompyuteringizda `ssh -L 8765:127.0.0.1:8765 USER@SERVER` tunnel ochib, localhost panelidan foydalaning. Unit parolni, API kalitlarini yoki panelni ommaga chiqarmaydi.
 7. `systemctl status telegram-agent`, `journalctl -u telegram-agent`, panel holati, saqlangan eslatma va foydalanuvchi ishtirokidagi bitta jonli qo'ng'iroqni tekshiring. Native audio, server UDP va real nutq sifati faqat hostda tasdiqlanadi.
 
+Telefon ilovasi uchun serverdagi panel oldida HTTPS kerak. `Caddyfile.example` faylidagi domenni haqiqiy DNS manziliga almashtirib, Caddy orqali loopbackdagi 8765-portga uzating. Ilovaning “Manzil” bo'limida yangi HTTPS manzilni saqlang. Qurilmadagi kirish sessiyasi 30 kun saqlanishi mumkin, parol yangilansa qayta kirish talab qilinadi. [Android ilovasi va qurish yo'riqnomasi](../android/README.md).
+
 Xizmatda texnik uzilishdan tiklanish bor. Telegram taqiqi, noto'g'ri kalit yoki qo'lda to'xtatish avtomatik qo'ng'iroq qayta terishiga aylantirilmaydi. `systemctl stop telegram-agent` xizmatni to'xtatadi. Serverning bepul tarifi, kvotasi va uzluksizligi hosting shartlariga bog'liq; bu fayllar bepul24/7 host ajratilganini bildirmaydi.

@@ -1,4 +1,5 @@
 import zipfile
+from datetime import timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -6,6 +7,26 @@ import pytest
 
 from telegram_agent.documents import DocumentLibrary
 from telegram_agent.maintenance import backup_path, create_backup
+from telegram_agent.store import utc_now
+
+
+async def test_document_cards_read_only_selected_sources_and_keep_notes(store, tmp_path):
+    root = tmp_path / "chosen"
+    root.mkdir()
+    source = root / "plan.txt"
+    source.write_text("<script>untrusted document text</script>", encoding="utf-8")
+    library = DocumentLibrary(store)
+    await library.index(str(root))
+    library.add_note("QA note", "Keep locally")
+    items = library.status()["items"]
+    assert len(items) == 2 and all("body" not in row for row in items)
+    file = next(row for row in items if row["kind"] == "file")
+    assert library.document(file["id"])["body"].startswith("<script>")
+    source.unlink()
+    with pytest.raises(ValueError, match="Manba fayli"):
+        library.document(file["id"])
+    library.disconnect()
+    assert len(library.status()["items"]) == 1
 
 
 async def test_selected_folder_only_supported_text_and_no_escape(store, tmp_path):
@@ -152,6 +173,7 @@ async def test_backup_disables_restored_outbound_jobs_but_keeps_live_queue(store
     import sqlite3
 
     job = store.queue_contact_call("@qa_example", "Original job")
+    reminder = store.add_reminder("Call reminder", (utc_now() + timedelta(hours=1)).isoformat())
     result = await create_backup(store)
     with zipfile.ZipFile(backup_path(store.root, result["id"])) as archive:
         snapshot = tmp_path / "snapshot.sqlite3"
@@ -162,9 +184,13 @@ async def test_backup_disables_restored_outbound_jobs_but_keeps_live_queue(store
             db.execute("SELECT state FROM outbound_calls WHERE id=?", (job["id"],)).fetchone()[0]
             == "interrupted"
         )
+        assert db.execute(
+            "SELECT state,mode,recovery_message_only FROM reminders WHERE id=?", (reminder["id"],)
+        ).fetchone() == ("pending", "call", 1)
     finally:
         db.close()
     assert store.list_contact_calls()[0]["state"] == "queued"
+    assert not store.list_reminders()[0]["recovery_message_only"]
 
 
 async def test_missing_required_audio_refuses_incomplete_backup(store):

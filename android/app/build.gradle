@@ -1,0 +1,39 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'uz.telegramagent.mobile'
+    compileSdk 35
+    buildFeatures { buildConfig true }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    defaultConfig {
+        applicationId 'uz.telegramagent.mobile'
+        minSdk 29
+        targetSdk 35
+        versionCode 2
+        versionName '0.3.1'
+        buildConfigField 'String', 'DEFAULT_SERVER_URL', groovy.json.JsonOutput.toJson(System.getenv('TELEGRAM_AGENT_DEFAULT_URL') ?: '')
+    }
+
+    signingConfigs {
+        release {
+            if (System.getenv('TELEGRAM_AGENT_KEYSTORE')) {
+                storeFile file(System.getenv('TELEGRAM_AGENT_KEYSTORE'))
+                storePassword System.getenv('TELEGRAM_AGENT_STORE_PASSWORD')
+                keyAlias 'telegram-agent'
+                keyPassword System.getenv('TELEGRAM_AGENT_STORE_PASSWORD')
+            }
+        }
+    }
+    buildTypes {
+        release {
+            signingConfig signingConfigs.release
+            minifyEnabled false
+        }
+    }
+}

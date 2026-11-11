@@ -22,6 +22,11 @@ __pycache__/
 *.key
 *.p12
 *.pfx
+*.jks
+*.keystore
+*.apk
+android/.gradle/
+android/local.properties
 *.session
 *.session-*
 credentials.json

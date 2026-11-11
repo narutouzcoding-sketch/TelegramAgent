@@ -7,7 +7,8 @@ import pytest
 from openai import RateLimitError
 from openai.types.chat import ChatCompletion
 
-from telegram_agent.ai_access import AIUnavailable
+from telegram_agent.ai_access import AIProviderUnavailable, AIUnavailable
+from telegram_agent.brain import Brain
 from telegram_agent.gemini_text import GeminiText
 
 
@@ -113,6 +114,86 @@ async def test_gemini_quota_failure_is_clear_and_does_not_rotate_accounts(brain)
         await adapter.create("system", [], [])
     assert "private-body-with-secret" not in str(error.value)
     assert create.await_count == 1
+
+
+async def test_text_fallback_skips_gemini_cooldown_across_restarts_and_recovers(brain):
+    from datetime import UTC, datetime, timedelta
+
+    cfg = replace(
+        brain.settings,
+        gemini_key="gemini-test-only",
+        groq_key="groq-test-only",
+        text_fallbacks=("groq",),
+        local_fallback_enabled=False,
+    )
+    primary_error = RateLimitError(
+        "test limit",
+        response=Mock(status_code=429, headers={"retry-after": "120"}, request=Mock()),
+        body={},
+    )
+    reply = completion({"role": "assistant", "content": "Sinov"})
+    reply.usage = SimpleNamespace(prompt_tokens=20, completion_tokens=5)
+    worker = Brain(cfg, brain.store)
+    restarted = Brain(cfg, brain.store)
+    try:
+        primary = AsyncMock(side_effect=primary_error)
+        groq = AsyncMock(return_value=reply)
+        worker.gemini.client.chat.completions.create = primary
+        worker.text_backups["groq"].client.chat.completions.create = groq
+        assert await worker.answer("Salom") == "Sinov"
+        assert primary.await_count == 1
+        assert worker.gemini.cooldown_remaining() > 110
+        assert groq.call_args.kwargs["max_completion_tokens"] == cfg.text_max_output_tokens
+        assert groq.call_args.kwargs["model"] == "openai/gpt-oss-20b"
+
+        recover = AsyncMock(return_value=reply)
+        restarted.gemini.client.chat.completions.create = recover
+        restarted.text_backups["groq"].client.chat.completions.create = groq
+        assert await restarted.answer("Yana salom") == "Sinov"
+        recover.assert_not_awaited()
+        usage = restarted.gemini.ledger.summary()["providers"]
+        assert usage["groq"]["requests"] == 2
+        assert usage["groq"]["input_tokens"] == 40
+        assert usage["gemini"]["unknown_usage"] == 1
+        assert "openai" not in restarted.text_backups
+
+        wait_until = (datetime.now(UTC) + timedelta(minutes=2)).isoformat()
+        brain.store.set_telegram_state("groq_cooldown_until", wait_until)
+        with pytest.raises(AIProviderUnavailable, match="AI xizmatlari vaqtincha band"):
+            await restarted.answer("Band bo'lgan paytdagi savol")
+        assert groq.await_count == 2
+        recover.assert_not_awaited()
+
+        brain.store.set_telegram_state("gemini_cooldown_until", datetime.now(UTC).isoformat())
+        assert await restarted.answer("Tiklandimi?") == "Sinov"
+        recover.assert_awaited_once()
+    finally:
+        await worker.close()
+        await restarted.close()
+
+
+async def test_text_fallback_keeps_tool_conversation_on_its_initial_provider(brain):
+    read_plans = completion(
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "gemini-plans",
+                    "type": "function",
+                    "function": {"name": "list_plans", "arguments": "{}"},
+                }
+            ],
+        },
+        "tool_calls",
+    )
+    failure = AIProviderUnavailable("Gemini kutish vaqti")
+    brain.gemini = SimpleNamespace(create=AsyncMock(side_effect=[read_plans, failure]))
+    groq = AsyncMock()
+    brain.text_backups = {"groq": SimpleNamespace(create=groq)}
+    with pytest.raises(AIProviderUnavailable, match="Gemini kutish vaqti"):
+        await brain.answer("Rejamni ko'rib bugun qaysi ishni boshlashni tavsiya qil")
+    groq.assert_not_awaited()
 
 
 async def test_gemini_only_mode_rejects_live_call_before_dialling(brain):

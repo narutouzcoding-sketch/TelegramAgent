@@ -10,6 +10,8 @@ from zoneinfo import ZoneInfo
 
 from openai import APIError
 from telethon import TelegramClient, events
+from telethon.errors import RandomIdDuplicateError
+from telethon.tl.functions.messages import SendMessageRequest
 from telethon.tl.types import UpdatePhoneCall, UpdatePhoneCallSignalingData
 
 from .ai_access import AIUnavailable, public_ai_error
@@ -28,9 +30,18 @@ HELP = """Men shaxsiy AI yordamchingizman. O'zbekcha yozing, ovozli xabar yubori
 /call — sizga qo'ng'iroq qilaman
 /hangup — qo'ng'iroqni tugatish
 /plans — ochiq rejalar
+/bugun — kunlik ishlar va e'tibor talab qiladigan vazifalar
+/qidir MATN — saqlangan ma'lumotlardan qidirish
+/bajarildi ID — rejani bajarildi deb belgilash
 /reminders — eslatmalar
+/keyin ID 15 daqiqa — xabar bilan keyinroq yana eslatish
+/reja Kitob o'qish — AI so'rovisiz reja saqlash
+/eslatma Suv ichish | 15 daqiqa — o'zingizga vaqtli Telegram xabari
+/xabar Matn — o'zingizga yuboriladigan xabar vaqtini alohida kiritish
+/bekor — tugallanmagan eslatmani bekor qilish
 /contacts — ulashilgan kontaktlar
 /callto en @username | xabar — tanlangan tilda aytish
+/sendto @username | xabar — Telegram orqali matn yuborish
 /askto en @username | savol — javob olib kelish
 /recordto en @username | English question — asl ovoz, AI tokensiz
 /voicecall @username — o'z golosingizga reply qilib, qo'ng'iroqda eshittirish
@@ -41,7 +52,8 @@ HELP = """Men shaxsiy AI yordamchingizman. O'zbekcha yozing, ovozli xabar yubori
 /calls — topshirilgan qo'ng'iroqlar holati
 /cancelcall ID — navbatdagi qo'ng'iroqni bekor qilish
 /status — holat
-/usage — bugungi saqlangan Gemini token sarfi (AI so'rovisiz)
+/limits — qo'ng'iroq urinishlari va kutish vaqti
+/usage — bugungi AI so'rovlari, token sarfi va kutish vaqti
 /help — yordam
 
 Misol: «Ertaga 09:00 da dars qilishimni qo'ng'iroq qilib eslat.»
@@ -98,7 +110,13 @@ class AgentApp:
         self.relay_voice = None
         self.active_recording = None
 
-    async def send_text(self, text):
+    async def send_text(self, text, *, random_id=None):
+        if random_id is not None:
+            request = SendMessageRequest(self.owner, text, random_id=random_id)
+            # A previous delivery may have reached Telegram before our local commit.
+            with suppress(RandomIdDuplicateError):
+                await self.policy.send(lambda: self.telegram(request))
+            return
         # Plain text prevents model-generated Markdown links from changing message meaning.
         for start in range(0, len(text), 3500):
             chunk = text[start : start + 3500]
@@ -144,8 +162,10 @@ class AgentApp:
             await self.policy.action(lambda: telegram_contacts(self.telegram, me.id)),
             "helper-telegram",
         )
-        from .contact_calls import run_queue
+        from .contact_calls import RecipientResolver, run_queue
 
+        self.recipient_resolver = RecipientResolver(self.telegram, self.store, me.id)
+        self.brain.contact_request = self.queue_requested_call
         self.telegram.add_event_handler(self.on_message, events.NewMessage(incoming=True))
 
         try:
@@ -160,8 +180,7 @@ class AgentApp:
             from .notifications import run_notifications
 
             notifications_task = asyncio.create_task(run_notifications(self))
-            if self.settings.enable_voice_calls:
-                self.contact_queue_task = asyncio.create_task(run_queue(self))
+            self.contact_queue_task = asyncio.create_task(run_queue(self))
             log.info("Agent started; owner allowlist active")
             self.ready.set()
             print(
@@ -225,7 +244,6 @@ class AgentApp:
         from pytgcalls.types import ChatUpdate, Device, Direction
 
         from .call_signals import CallSignals, trace_phone_rpc
-        from .contact_calls import RecipientResolver
 
         self.call_signals = CallSignals(own_id)
         # Observe before the bridge, so an adapter failure cannot hide acceptance.
@@ -234,8 +252,6 @@ class AgentApp:
             events.Raw(types=(UpdatePhoneCall, UpdatePhoneCallSignalingData)),
         )
 
-        self.recipient_resolver = RecipientResolver(self.telegram, self.store, own_id)
-        self.brain.contact_request = self.queue_requested_call
         self.calls = PyTgCalls(self.telegram)
         trace_phone_rpc(self.calls, self.call_signals)
 
@@ -299,10 +315,13 @@ class AgentApp:
             for frame in update.frames:
                 voice.accept_pcm48(frame.frame)
 
-    async def queue_requested_call(self, target, message, **options):
+    async def queue_requested_call(self, target, message, *, expected_recipient_id=None, **options):
         from dataclasses import replace
 
+        options.setdefault("fallback_to_message", True)
         user = await self.policy.action(lambda: self.recipient_resolver.resolve(target))
+        if expected_recipient_id is not None and user.id != expected_recipient_id:
+            raise ValueError("Kontaktning Telegram akkaunti o'zgargan. Uni qayta tekshiring.")
         if user.id == self.settings.owner_id:
             raise ValueError("O'zingizga qo'ng'iroq qilish uchun /call ishlating.")
         reference = "@" + user.username if user.username else target
@@ -319,7 +338,11 @@ class AgentApp:
         )
         self.policy.settings = self.brain.settings = self.settings
         return self.store.queue_contact_call(
-            reference, message, recipient_user_id=user.id, **options
+            reference,
+            message,
+            recipient_user_id=user.id,
+            call_limits=(self.settings.call_cooldown_seconds, self.settings.max_calls_per_hour),
+            **options,
         )
 
     def spawn(self, coroutine):
@@ -477,12 +500,19 @@ class AgentApp:
     async def deliver(self, row, late):
         when = datetime.fromisoformat(row["due"]).astimezone(ZoneInfo(self.settings.timezone))
         text = f"Eslatma #{row['id']}: {row['title']}\nVaqti: {when:%Y-%m-%d %H:%M}"
+        text += f"\nKeyinroq eslatish uchun /keyin {row['id']} 15 daqiqa"
         if late:
             text += "\nDastur ishlamay turgani sabab bu eslatma kechikdi."
         if row.get("recovery_message_only"):
-            text += "\nOldingi yetkazish uzilgan; ushbu eslatma xabar bilan tiklandi. Qayta qo'ng'iroq qilinmadi."
+            text += "\nTiklash rejimi: eslatma xabar bilan yetkazildi. Qayta qo'ng'iroq qilinmadi."
         # A durable chat copy is useful even when the owner answers the call.
-        await self.send_text(text)
+        if not row.get("message_confirmed"):
+            if random_id := row.get("message_random_id"):
+                await self.send_text(text, random_id=random_id)
+                if not self.store.confirm_reminder_message(row):
+                    return "claim_released"
+            else:
+                await self.send_text(text)
         if (
             self.settings.enable_voice_calls
             and row["mode"] == "call"
@@ -498,14 +528,37 @@ class AgentApp:
                 raise
             except Exception as exc:
                 log.info("Reminder call unavailable id=%s type=%s", row["id"], type(exc).__name__)
-                await self.send_text(
-                    "Eslatma qo'ng'irog'i ulanmagan. Yuqoridagi eslatma saqlanib qoldi."
-                )
+                # The reminder already reached Telegram. An optional status message
+                # must not make the scheduler send the same reminder again.
+                try:
+                    await self.send_text(
+                        "Eslatma qo'ng'irog'i ulanmagan. Yuqoridagi eslatma saqlanib qoldi."
+                    )
+                except Exception as notice_error:
+                    log.warning(
+                        "Reminder call status unavailable id=%s type=%s",
+                        row["id"],
+                        type(notice_error).__name__,
+                    )
                 return "message_fallback"
         return "late_message" if late else "message_sent"
 
     async def on_message(self, event):
         if not is_owner(event, self.settings.owner_id):
+            if (
+                getattr(event, "is_private", False)
+                and not getattr(event, "out", True)
+                and getattr(event, "sender_id", None) in self.settings.allowed_call_user_ids
+                and getattr(event, "reply_to_msg_id", None)
+                and getattr(event, "raw_text", "").strip()
+            ):
+                self.store.capture_contact_text_reply(
+                    event.sender_id,
+                    event.reply_to_msg_id,
+                    event.id,
+                    event.raw_text.strip(),
+                    self.settings.owner_id,
+                )
             return
         text = event.raw_text.strip()
         command = text.split(maxsplit=1)[0].lower() if text else ""
@@ -536,6 +589,9 @@ class AgentApp:
             )
             return
         if command == "/status":
+            budget = self.store.call_budget(
+                self.settings.call_cooldown_seconds, self.settings.max_calls_per_hour
+            )
             await self.send_text(
                 f"Agent ishlayapti. Zona: {self.settings.timezone}. "
                 f"Qo'ng'iroq: {'faol' if self.call_lock.locked() else 'bo‘sh'}. "
@@ -544,7 +600,8 @@ class AgentApp:
                 f"Matn AI: {self.settings.resolved_text_provider}. "
                 f"Ovoz xizmati: {self.settings.voice_provider}. "
                 f"Ovozli qo'ng'iroq: {'yoqilgan' if self.settings.enable_voice_calls else 'o‘chirilgan'}. "
-                f"Kontaktlarga qo'ng'iroq: {'yoqilgan' if self.settings.enable_contact_calls else 'o‘chirilgan'}."
+                f"Kontaktlarga qo'ng'iroq: {'yoqilgan' if self.settings.enable_contact_calls else 'o‘chirilgan'}.\n"
+                + budget["text"]
             )
             return
         if command in {"/voicecall", "/voiceask", "/voicesend"}:
@@ -619,14 +676,10 @@ class AgentApp:
                 or "Qo'ng'iroq topshiriqlari yo'q."
             )
             return
-        if command in {"/callto", "/askto", "/talkto", "/recordto", "/cancelcall"}:
+        if command in {"/callto", "/askto", "/talkto", "/recordto", "/sendto", "/cancelcall"}:
             try:
                 arguments = text[len(command) :].strip()
-                if command in {"/callto", "/askto", "/talkto", "/recordto"}:
-                    if not self.settings.enable_voice_calls:
-                        raise ValueError(
-                            "Kontaktlarga qo'ng'iroq hozir o'chirilgan. Avval faqat egasi bilan sinov qilinadi."
-                        )
+                if command in {"/callto", "/askto", "/talkto", "/recordto", "/sendto"}:
                     target, separator, message = arguments.partition("|")
                     if not separator:
                         raise ValueError(
@@ -645,13 +698,12 @@ class AgentApp:
                             "/askto": "ask",
                             "/talkto": "conversation",
                             "/recordto": "record",
+                            "/sendto": "text",
                         }[command],
                         language=language,
                     )
                     await self.send_text(
-                        f"Qo'ng'iroq #{result['id']} navbatga qo'yildi: "
-                        f"{result['target']}\nAytiladi: {result['message']}\n"
-                        "Faol suhbat tugagach bajariladi. /calls — holat."
+                        Brain.write_reply("queue_contact_call", {"ok": True, "result": result})
                     )
                 else:
                     job_id = int(arguments)

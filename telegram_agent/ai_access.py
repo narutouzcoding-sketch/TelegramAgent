@@ -57,6 +57,10 @@ class AIUnavailable(RuntimeError):
     """A deliberately sanitized explanation suitable for the owner."""
 
 
+class AIProviderUnavailable(AIUnavailable):
+    """An availability failure eligible for a different, configured provider."""
+
+
 class AIClientPool:
     def __init__(self, settings):
         keys = tuple(

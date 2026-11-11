@@ -17,6 +17,12 @@ def build_backup(root, source_path):
         source, destination = sqlite3.connect(source_path), sqlite3.connect(snapshot)
         try:
             source.backup(destination)
+            if destination.execute(
+                "SELECT 1 FROM sqlite_master WHERE name='panel_sessions'"
+            ).fetchone():
+                destination.execute("DELETE FROM panel_sessions")
+            if destination.execute("PRAGMA quick_check").fetchone() != ("ok",):
+                raise ValueError("SQLite zaxirasi tekshiruvdan o'tmadi.")
             # Derive audio only from this exact snapshot; concurrent new uploads
             # cannot add metadata without their audio to the backup.
             required = [
@@ -28,6 +34,11 @@ def build_backup(root, source_path):
             # Restoring a snapshot must never redial a third party automatically.
             destination.execute(
                 "UPDATE outbound_calls SET state='interrupted',result='Zaxira nusxa: avtomatik qayta bajarilmadi.' WHERE state IN ('queued','running')"
+            )
+            destination.execute(
+                """UPDATE reminders SET recovery_message_only=1, claim_token=NULL, lease_until=NULL,
+                   state='pending', attempts=0, retry_after=NULL
+                   WHERE state='delivering' OR (state='pending' AND mode='call')"""
             )
             destination.execute(
                 "UPDATE recordings SET state='failed',last_error='Zaxirada faqat tugallangan OGG yozuvlar bor.' WHERE state IN ('capturing','captured')"

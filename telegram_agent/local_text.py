@@ -42,6 +42,7 @@ async def ensure_local_server(url="http://127.0.0.1:11434"):
         env["OLLAMA_HOST"] = "127.0.0.1:11434"
         for key in (
             "GEMINI_API_KEY",
+            "GROQ_API_KEY",
             "OPENAI_API_KEY",
             "OPENAI_BACKUP_API_KEYS",
             "TELEGRAM_API_HASH",

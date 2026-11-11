@@ -1,0 +1,5 @@
+# Replace agent.example.com with the server's real DNS name before using this file.
+agent.example.com {
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:8765
+}

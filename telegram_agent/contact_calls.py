@@ -9,13 +9,14 @@ from contextlib import suppress
 from pathlib import Path
 
 from openai import APIError
-from telethon import functions
+from telethon import errors, functions
 from telethon.tl.types import User
 
 from .ai_access import AIUnavailable, public_ai_error
 from .config import ROOT
+from .contact_names import contact_matches, normalized
 from .setup_inputs import international_phone
-from .telegram_policy import TelegramPaused
+from .telegram_policy import CallRateLimited, TelegramPaused
 
 log = logging.getLogger(__name__)
 
@@ -47,13 +48,25 @@ class RecipientResolver:
         self.last_phone_lookup = None
 
     async def resolve(self, target):
+        try:
+            return await self._resolve(target)
+        except errors.PhoneNotOccupiedError:
+            raise ValueError("Telegram bu raqamdan akkaunt topmadi. @username kiriting.") from None
+        except (errors.UsernameNotOccupiedError, errors.UsernameInvalidError):
+            raise ValueError("Telegram username topilmadi. To'g'ri @username kiriting.") from None
+
+    async def _resolve(self, target):
         target = target.strip()
         for prefix in ("https://t.me/", "http://t.me/", "t.me/"):
             if target.startswith(prefix):
                 target = "@" + target[len(prefix) :].split("?")[0].strip("/")
         saved = [
-            row for row in self.store.list_contacts() if row["name"].casefold() == target.casefold()
+            row
+            for row in self.store.list_contacts()
+            if normalized(row["name"]) == normalized(target)
         ]
+        if not saved and not target.startswith(("@", "+", "id:")):
+            saved = [row for row in self.store.list_contacts() if contact_matches(row, target)]
         if len(saved) > 1:
             raise ValueError(
                 "Bu ism bilan bir nechta kontakt bor. Aniq @username yoki raqam bering."
@@ -139,10 +152,12 @@ async def play_relay(app, user, audio):
     from .recordings import begin_recording, end_recording
 
     async with app.call_lock:
+        diagnostics = getattr(app, "contact_delivery_diagnostics", {})
         app.call_task = asyncio.current_task()
         app.relay_target = user.id
         app.relay_ended = asyncio.Event()
         recording = None
+        rate_limited = False
         try:
             async with asyncio.timeout(app.settings.ring_timeout_seconds + 45):
                 await app.policy.dial(
@@ -157,6 +172,7 @@ async def play_relay(app, user, audio):
                         config=CallConfig(timeout=app.settings.ring_timeout_seconds),
                     ),
                 )
+                diagnostics["connected"] = True
             recording = begin_recording(
                 app, user.id, str(user.id), getattr(app, "contact_job_id", None)
             )
@@ -175,6 +191,7 @@ async def play_relay(app, user, audio):
                 await app.calls.send_frame(
                     user.id, Device.MICROPHONE, audio[offset : offset + 960].ljust(960, b"\0")
                 )
+                diagnostics["playback_frames"] = diagnostics.get("playback_frames", 0) + 1
                 if recording is not None:
                     recording.write("outgoing", audio[offset : offset + 960].ljust(960, b"\0"))
                 deadline += 0.01
@@ -184,9 +201,13 @@ async def play_relay(app, user, audio):
             if app.relay_ended.is_set():
                 raise ValueError("Qo'ng'iroq xabar tugamasdan uzildi.")
             await asyncio.sleep(0.25)
+        except CallRateLimited:
+            rate_limited = True
+            raise
         finally:
-            with suppress(Exception):
-                await app.calls.leave_call(user.id)
+            if not rate_limited:
+                with suppress(Exception):
+                    await app.calls.leave_call(user.id)
             end_recording(app, recording)
             app.relay_target = None
             app.relay_ended = None
@@ -196,13 +217,23 @@ async def play_relay(app, user, audio):
 async def execute_job(app, job):
     task = None
     summary = ""
+    authorized_user = None
+    app.contact_delivery_diagnostics = {}
     try:
-        if (
-            not app.settings.enable_voice_calls
-            or not app.settings.enable_contact_calls
-            or not app.settings.allowed_call_user_ids
-        ):
+        if not app.settings.enable_contact_calls or not app.settings.allowed_call_user_ids:
             raise ValueError("Kontakt qo'ng'iroqlari o'chirilgan; telefon terilmadi.")
+        fallback_reason = ""
+        if not app.settings.enable_voice_calls and job.get("delivery", "call") == "call":
+            if not job.get("fallback_to_message"):
+                raise ValueError("Ovozli qo'ng'iroqlar o'chirilgan.")
+            fallback_reason = "Ovozli qo'ng'iroqlar o'chirilgan"
+        if job.get("delivery", "call") == "call":
+            if retry_at := app.store.next_call_at(
+                app.settings.call_cooldown_seconds, app.settings.max_calls_per_hour
+            ):
+                if not job.get("fallback_to_message"):
+                    raise CallRateLimited(app.store.call_limit_message(retry_at))
+                fallback_reason = "Mahalliy qo'ng'iroq limiti band"
         user = await app.policy.action(lambda: app.recipient_resolver.resolve(job["target"]))
         if job.get("recipient_user_id") and user.id != job["recipient_user_id"]:
             raise ValueError("Kontaktning akkaunti o'zgargan; qo'ng'iroq qilinmadi.")
@@ -210,7 +241,20 @@ async def execute_job(app, job):
             raise ValueError(
                 "Bu foydalanuvchi ruxsat berilgan kontaktlar ro'yxatida yo'q; telefon terilmadi."
             )
-        await app.send_text(f"Qo'ng'iroq #{job['id']}: {job['target']} uchun xabar tayyorlanyapti.")
+        authorized_user = user
+        if job.get("mode") == "text" or fallback_reason:
+            from .contact_messages import send_contact_message
+
+            summary = await send_contact_message(app, job, user, fallback_reason)
+            return
+        try:
+            await app.send_text(
+                f"Qo'ng'iroq #{job['id']}: {job['target']} uchun xabar tayyorlanyapti."
+            )
+        except TelegramPaused:
+            raise
+        except Exception as exc:
+            log.warning("Call progress notification failed type=%s", type(exc).__name__)
         if job.get("mode") == "voice":
             from .voice_library import asset_path, original_voice_task, prepare_voice_call
 
@@ -279,13 +323,37 @@ async def execute_job(app, job):
                     await app.brain.free_speech.speech(text, path, language=language)
                 audio = await decode_pcm(path)
                 await play_relay(app, user, audio)
+    except CallRateLimited as exc:
+        if job.get("fallback_to_message") and authorized_user is not None:
+            from .contact_messages import send_contact_message
+
+            summary = await send_contact_message(
+                app, job, authorized_user, "Mahalliy qo'ng'iroq limiti band"
+            )
+            return
+        summary = str(exc)
+        app.store.finish_contact_call(job["id"], "rate_limited", summary)
+        if task is None:
+            app.store.save_contact_report(
+                job["id"], [], "", diagnostics={"error_code": "CallRateLimited"}
+            )
+        else:
+            task.voice_diagnostics = dict(getattr(task, "voice_diagnostics", {}))
+            task.voice_diagnostics["error_code"] = "CallRateLimited"
+        await notify_owner(app, f"Qo'ng'iroq #{job['id']}: {summary}")
     except asyncio.CancelledError:
-        app.store.finish_contact_call(job["id"], "cancelled", "Qo'ng'iroq to'xtatildi.")
+        if not job.get("text_random_id"):
+            app.store.finish_contact_call(job["id"], "cancelled", "Qo'ng'iroq to'xtatildi.")
         raise
     except Exception as exc:
         from .call_outcomes import connection_outcome
 
-        diagnostics = getattr(task, "voice_diagnostics", {}) if task else {}
+        diagnostics = dict(
+            getattr(task, "voice_diagnostics", {}) if task else app.contact_delivery_diagnostics
+        )
+        diagnostics["error_code"] = type(exc).__name__
+        if task is not None:
+            task.voice_diagnostics = diagnostics
         outcome = connection_outcome(
             exc,
             getattr(app.settings, "ring_timeout_seconds", None),
@@ -306,7 +374,6 @@ async def execute_job(app, job):
             reason = summary
             if task is not None:
                 task.connection_failure = summary
-                diagnostics["error_code"] = type(exc).__name__
                 diagnostics["stage"] = state
         if task is not None:
             summary = await task.summary()
@@ -319,8 +386,22 @@ async def execute_job(app, job):
                 answer_verified=task.answer_verified,
                 answer_evidence=[*task.partial_evidence, *task.evidence],
                 question_delivered=task.question_delivered,
-                diagnostics=getattr(task, "voice_diagnostics", {}),
+                diagnostics=diagnostics,
             )
+        else:
+            app.store.save_contact_report(job["id"], [], "", diagnostics=diagnostics)
+        if (
+            job.get("fallback_to_message")
+            and authorized_user is not None
+            and not isinstance(exc, TelegramPaused)
+            and not diagnostics.get("connected")
+            and not diagnostics.get("playback_frames")
+            and not (task and task.question_delivered)
+        ):
+            from .contact_messages import send_contact_message
+
+            summary = await send_contact_message(app, job, authorized_user, "Qo'ng'iroq ulanmadi")
+            return
         app.store.finish_contact_call(job["id"], state, reason)
         await notify_owner(
             app,

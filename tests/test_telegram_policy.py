@@ -11,7 +11,7 @@ from telethon.tl.types import User
 from telegram_agent.app import AgentApp
 from telegram_agent.contact_calls import execute_job
 from telegram_agent.store import Store, utc_now
-from telegram_agent.telegram_policy import TelegramPaused, TelegramPolicy
+from telegram_agent.telegram_policy import CallRateLimited, TelegramPaused, TelegramPolicy
 
 
 async def test_default_denies_calls_before_telegram_and_ai_work(brain):
@@ -102,8 +102,85 @@ def test_call_limits_survive_store_reopen(tmp_path):
         assert store.reserve_call(42, now=now + timedelta(seconds=61))
         assert store.reserve_call(42, now=now + timedelta(seconds=122))
         assert not store.reserve_call(42, now=now + timedelta(seconds=183))
+        assert store.next_call_at(60, 3, now + timedelta(seconds=183)) == now + timedelta(hours=1)
+        assert store.reserve_call(42, now=now + timedelta(hours=1))
     finally:
         store.close()
+
+
+async def test_owner_call_request_rejected_before_queue_when_hourly_budget_is_full(brain):
+    settings = replace(brain.settings, enable_voice_calls=True, max_calls_per_hour=1)
+    assert brain.store.reserve_call(77, now=utc_now() - timedelta(minutes=2))
+    agent = AgentApp.__new__(AgentApp)
+    agent.brain, agent.settings, agent.store = brain, settings, brain.store
+    agent.policy = TelegramPolicy(settings, brain.store)
+    agent.recipient_resolver = SimpleNamespace(
+        resolve=AsyncMock(return_value=User(id=88, first_name="QA", username="qa_example"))
+    )
+    brain.contact_request = agent.queue_requested_call
+    result = await brain.execute_async_tool(
+        "queue_contact_call",
+        {"target": "@qa_example", "message": "Qayerdasan?", "fallback_to_message": False},
+        "limit-test",
+    )
+    assert not result["ok"]
+    assert "Telefon terilmadi" in result["error"] and "Asia/Tashkent" in result["error"]
+    assert brain.store.list_contact_calls() == []
+    operation = AsyncMock()
+    with pytest.raises(CallRateLimited):
+        await agent.policy.dial(88, operation)
+    operation.assert_not_awaited()
+
+
+async def test_budget_used_after_queueing_reports_no_attempt_without_preparing_audio(brain):
+    settings = replace(
+        brain.settings,
+        enable_voice_calls=True,
+        enable_contact_calls=True,
+        allowed_call_user_ids=(77,),
+        max_calls_per_hour=1,
+    )
+    brain.store.queue_contact_call("@qa_example", "Qayerdasan?", mode="ask")
+    job = brain.store.claim_contact_call()
+    assert brain.store.reserve_call(77)
+    app = SimpleNamespace(
+        settings=settings,
+        store=brain.store,
+        recipient_resolver=SimpleNamespace(resolve=AsyncMock()),
+        send_text=AsyncMock(),
+    )
+    await execute_job(app, job)
+    assert brain.store.list_contact_calls()[0]["state"] == "rate_limited"
+    app.recipient_resolver.resolve.assert_not_awaited()
+    app.send_text.assert_awaited_once()
+    report = app.send_text.call_args.args[0]
+    assert "Telefon terilmadi" in report and "Asia/Tashkent" in report
+    assert "texnik holat" not in report and "ulanishi" not in report
+
+
+async def test_limits_and_status_report_shared_budget_without_ai_or_new_reservations(brain):
+    brain.settings = replace(brain.settings, max_calls_per_hour=1)
+    now = utc_now()
+    assert brain.store.reserve_call(77, now=now)
+    brain.ai.request = AsyncMock(side_effect=AssertionError("No cloud request expected"))
+    report = await brain.answer("/limits")
+    assert "1/1" in report and "Asia/Tashkent" in report
+    budget = brain.store.call_budget(60, 1, now + timedelta(seconds=20))
+    assert budget["used"] == 1 and budget["remaining"] == 0
+    assert budget["retry_at"] == (now + timedelta(hours=1)).isoformat()
+
+    app = AgentApp.__new__(AgentApp)
+    app.settings, app.store = brain.settings, brain.store
+    app.call_lock = asyncio.Lock()
+    app.send_text = AsyncMock()
+    await app.on_message(
+        SimpleNamespace(
+            is_private=True, sender_id=brain.settings.owner_id, out=False, raw_text="/status"
+        )
+    )
+    assert "1/1" in app.send_text.call_args.args[0]
+    assert brain.store.call_budget(60, 1, now)["used"] == 1
+    brain.ai.request.assert_not_awaited()
 
 
 async def test_text_mode_starts_without_call_transport(brain, monkeypatch):
@@ -114,6 +191,7 @@ async def test_text_mode_starts_without_call_transport(brain, monkeypatch):
 
     app = AgentApp.__new__(AgentApp)
     app.settings, app.store = brain.settings, brain.store
+    app.brain = brain
     app.policy = TelegramPolicy(brain.settings, brain.store)
     app.telegram = SimpleNamespace(
         connect=AsyncMock(),
@@ -131,4 +209,6 @@ async def test_text_mode_starts_without_call_transport(brain, monkeypatch):
     with pytest.raises(ConnectionError, match="ulanishi"):
         await app._run()
     app._start_call_transport.assert_not_called()
-    assert app.contact_queue_task is None
+    assert app.contact_queue_task.done()
+    assert app.recipient_resolver is not None
+    assert brain.contact_request == app.queue_requested_call
